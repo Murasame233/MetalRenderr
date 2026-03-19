@@ -29,7 +29,7 @@ MetalRender is inspired by Nvidium (the amazing mod for Nvidia GPUs that makes y
 # Notes
 
 - Only works on Metal (macOS)
-- Will still load on other GPUs but won't offer any additional benefits or changes
+- Will still load on other computer but won't offer any additional benefits or changes
 - Shaders are not yet supported, they might be added in the future
 - This should be compatible with most other mods, if it isn't please add a Issue
 - MarioMastr helped me a ton by making a fork that addressed some MAJOR issues in native code! Thank them too!
