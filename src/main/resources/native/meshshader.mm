@@ -9,6 +9,9 @@ extern id<MTLDevice> g_device;
 extern id<MTLRenderCommandEncoder> g_currentEncoder;
 extern id<MTLDepthStencilState> g_depthState;
 extern id<MTLBuffer> g_subChunkBuffer;
+extern id<MTLRenderPipelineState> g_pipelineMeshOpaque;
+extern id<MTLRenderPipelineState> g_pipelineMeshCutout;
+extern id<MTLRenderPipelineState> g_pipelineMeshEmissive;
 extern id<MTLBuffer> g_cullDrawArgsBuffer;
 extern id<MTLBuffer> g_cullDrawCountBuffer;
 extern uint32_t g_gpuSubChunkCount;
@@ -86,19 +89,17 @@ buildMeshPipeline(id<MTLDevice> device, id<MTLLibrary> library,
         [NSString stringWithFormat:@"MeshPipeline_%@_%@_%@", objectFuncName,
                                    meshFuncName, fragmentFuncName];
     desc.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
-    desc.colorAttachments[0].blendingEnabled = YES;
-    desc.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
-    desc.colorAttachments[0].destinationRGBBlendFactor =
-        MTLBlendFactorOneMinusSourceAlpha;
-    desc.colorAttachments[0].rgbBlendOperation = MTLBlendOperationAdd;
-    desc.colorAttachments[0].sourceAlphaBlendFactor = MTLBlendFactorOne;
-    desc.colorAttachments[0].destinationAlphaBlendFactor =
-        MTLBlendFactorOneMinusSourceAlpha;
-    desc.colorAttachments[0].alphaBlendOperation = MTLBlendOperationAdd;
+
+
+
+    desc.colorAttachments[0].blendingEnabled = NO;
     desc.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
-    desc.maxTotalThreadsPerObjectThreadgroup = 256;
+
+
+    desc.maxTotalThreadsPerObjectThreadgroup = 1;
     desc.maxTotalThreadsPerMeshThreadgroup = 256;
-    desc.payloadMemoryLength = 256 * sizeof(float) * 4;
+
+    desc.payloadMemoryLength = 16;
     id<MTLRenderPipelineState> pipeline =
         [device newRenderPipelineStateWithMeshDescriptor:desc
                                                  options:0
@@ -349,6 +350,16 @@ Java_com_pebbles_1boon_metalrender_nativebridge_MeshShaderNative_createTerrainMe
     }
   }
   g_meshShadersActive = (handles[0] != 0);
+
+
+
+  if (handles[0] != 0)
+    g_pipelineMeshOpaque = g_meshPipelines[(uint64_t)handles[0]].pipeline;
+  if (handles[1] != 0)
+    g_pipelineMeshCutout = g_meshPipelines[(uint64_t)handles[1]].pipeline;
+  if (handles[2] != 0)
+    g_pipelineMeshEmissive = g_meshPipelines[(uint64_t)handles[2]].pipeline;
+
   jlongArray result = env->NewLongArray(specCount);
   env->SetLongArrayRegion(result, 0, specCount, handles);
   return result;

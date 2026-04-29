@@ -97,3 +97,64 @@ fragment half4 fragment_oit_composite(
     half3 result = avgColor * (half(1.0) - revealage) + opaque.rgb * revealage;
     return half4(result, half(1.0));
 }
+
+
+
+
+
+
+struct TerrainOitVertOut {
+    float4 position    [[position]];
+    float2 texCoord;
+    half4  color;
+    half   light;
+    uint   normalIndex [[flat]];
+};
+
+
+
+fragment OitAccumOutput fragment_oit_terrain_accum(
+    TerrainOitVertOut      in        [[stage_in]],
+    texture2d<half>        blockAtlas [[texture(0)]]
+) {
+    constexpr sampler texSampler(mag_filter::nearest, min_filter::nearest,
+                                 address::clamp_to_edge);
+    half4 texColor = blockAtlas.sample(texSampler, in.texCoord);
+    if (texColor.a < half(0.004h)) discard_fragment();
+
+    half4 baseColor = texColor * in.color;
+    baseColor.rgb  *= max(in.light, half(0.1h));
+
+    half  alpha = baseColor.a;
+
+    float linearDepth = in.position.w;
+    float w = max(1e-2f,
+                  min(3e3f, float(alpha) * 10.0f /
+                            (1e-5f + pow(linearDepth / 200.0f, 4.0f))));
+    half weight = half(w);
+
+    OitAccumOutput out;
+    out.accumColor = half4(baseColor.rgb * alpha * weight, alpha * weight);
+    out.revealage  = alpha;
+    return out;
+}
+
+
+
+fragment half4 fragment_oit_composite_tbdr(
+    CompositeVertexOut      in            [[stage_in]],
+    texture2d<half>         accumTex      [[texture(0)]],
+    texture2d<half>         revealageTex  [[texture(1)]],
+    half4                   opaqueColor   [[color(0)]]
+) {
+    uint2  coord     = uint2(in.position.xy);
+    half4  accum     = accumTex.read(coord);
+    half   revealage = revealageTex.read(coord).r;
+
+    if (accum.a < half(1e-4h)) return opaqueColor;
+
+    half3 avgColor = accum.rgb / max(accum.a, half(1e-4h));
+    half3 result   = avgColor * (half(1.0h) - revealage)
+                   + opaqueColor.rgb * revealage;
+    return half4(result, opaqueColor.a);
+}

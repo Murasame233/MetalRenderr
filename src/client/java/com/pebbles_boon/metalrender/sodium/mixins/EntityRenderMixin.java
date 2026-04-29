@@ -1,4 +1,5 @@
 package com.pebbles_boon.metalrender.sodium.mixins;
+
 import com.pebbles_boon.metalrender.MetalRenderClient;
 import com.pebbles_boon.metalrender.entity.MetalEntityRenderer;
 import com.pebbles_boon.metalrender.render.MetalWorldRenderer;
@@ -9,6 +10,8 @@ import net.minecraft.client.render.Frustum;
 import net.minecraft.client.render.RenderTickCounter;
 import net.minecraft.client.render.WorldRenderer;
 import net.minecraft.client.render.state.WorldRenderState;
+import net.minecraft.client.render.command.OrderedRenderCommandQueue;
+import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.entity.Entity;
 import org.joml.Matrix4f;
 import org.spongepowered.asm.mixin.Mixin;
@@ -16,10 +19,15 @@ import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+
 @Mixin(WorldRenderer.class)
 public class EntityRenderMixin {
   @Unique
   private int metalrender$entityCaptureCount = 0;
+
+  @Unique
+  private final Matrix4f metalrender$reusableModelMatrix = new Matrix4f();
+
   @Inject(method = "fillEntityRenderStates", at = @At("TAIL"), require = 0)
   private void metalrender$captureEntities(Camera camera, Frustum frustum,
       RenderTickCounter tickCounter,
@@ -46,7 +54,8 @@ public class EntityRenderMixin {
           continue;
         if (!frustum.isVisible(entity.getBoundingBox()))
           continue;
-        Matrix4f modelMatrix = new Matrix4f();
+        Matrix4f modelMatrix = metalrender$reusableModelMatrix;
+        modelMatrix.identity();
         entityRenderer.captureEntity(entity, tickDelta, modelMatrix);
         capturedThisFrame++;
       }
@@ -63,6 +72,19 @@ public class EntityRenderMixin {
         MetalLogger.error("[EntityRenderMixin] Failed to capture entities: %s",
             e.getMessage());
       }
+    }
+  }
+
+  @Inject(method = "pushEntityRenders", at = @At("HEAD"), cancellable = true, require = 0)
+  private void metalrender$suppressVanillaEntities(MatrixStack matrices,
+      WorldRenderState renderStates,
+      OrderedRenderCommandQueue queue,
+      CallbackInfo ci) {
+    if (!MetalRenderClient.isEnabled())
+      return;
+    MetalWorldRenderer worldRenderer = MetalRenderClient.getWorldRenderer();
+    if (worldRenderer != null && worldRenderer.shouldRenderWithMetal()) {
+      ci.cancel();
     }
   }
 }

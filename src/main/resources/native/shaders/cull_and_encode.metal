@@ -15,8 +15,8 @@ struct CameraUniforms {
     uint     _pad;
 };
 struct SubChunkEntry {
-    float4   aabbMin;       
-    float4   aabbMax;       
+    float4   aabbMin;
+    float4   aabbMax;
     uint     bufHandleHi;
     uint     bufHandleLo;
     uint     indexCount;
@@ -42,7 +42,7 @@ bool isOccludedByHiZ(float3 aabbMin, float3 aabbMax,
             (i & 4) ? aabbMax.z : aabbMin.z
         );
         float4 clip = camera.viewProjection * float4(corner, 1.0);
-        if (clip.w <= 0.0) return false; 
+        if (clip.w <= 0.0) return false;
         float3 ndc = clip.xyz / clip.w;
         float2 ss = (ndc.xy * 0.5 + 0.5) * camera.screenSize;
         ssMin = min(ssMin, ss);
@@ -89,7 +89,7 @@ kernel void cull_and_encode(
         return;
     }
     float3 center = (chunk.aabbMin.xyz + chunk.aabbMax.xyz) * 0.5;
-    float distSq = dot(center, center); 
+    float distSq = dot(center, center);
     if (distSq > camera.farPlane * camera.farPlane) {
         atomic_fetch_add_explicit(&stats->distanceCulled, 1, memory_order_relaxed);
         return;

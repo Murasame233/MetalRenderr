@@ -13,7 +13,7 @@ fragment float4 fragment_terrain(
     constexpr sampler texSampler(filter::nearest, address::clamp_to_edge);
     float4 texColor = blockAtlas.sample(texSampler, in.texCoord);
     float4 baseColor = texColor * in.color;
-    float lightFactor = clamp(in.lightUV.x * 0.8 + 0.2, 0.2, 1.0);
+    float lightFactor = clamp(in.lightUV.x * 0.96 + 0.04, 0.04, 1.0);
     baseColor.rgb *= lightFactor;
     return float4(baseColor.rgb, 1.0);
 }

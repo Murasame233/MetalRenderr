@@ -1,12 +1,23 @@
 package com.pebbles_boon.metalrender.gui.components;
+
 import java.util.function.Consumer;
+import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.widget.SliderWidget;
 import net.minecraft.text.Text;
+
+
 public class MetalOptionSlider extends SliderWidget {
+
+  private static final int C_TRACK = 0xFF48484A;
+  private static final int C_FILL = 0xFF007AFF;
+  private static final int C_KNOB = 0xFFFFFFFF;
+  private static final int C_KNOB_EDGE = 0xFF636366;
+
   private final float minValue;
   private final float maxValue;
   private final float step;
   private final Consumer<Float> onChange;
+
   public MetalOptionSlider(int x, int y, int width, int height, Text text,
       float min, float max, float step, float currentValue,
       Consumer<Float> onChange) {
@@ -17,18 +28,20 @@ public class MetalOptionSlider extends SliderWidget {
     this.onChange = onChange;
     updateMessage();
   }
+
   private static double normalize(float value, float min, float max) {
     if (max <= min)
       return 0;
     return (value - min) / (max - min);
   }
+
   public float getRealValue() {
     float raw = minValue + (float) this.value * (maxValue - minValue);
-    if (step > 0) {
+    if (step > 0)
       raw = Math.round(raw / step) * step;
-    }
     return Math.max(minValue, Math.min(maxValue, raw));
   }
+
   @Override
   protected void updateMessage() {
     float v = getRealValue();
@@ -38,10 +51,35 @@ public class MetalOptionSlider extends SliderWidget {
       setMessage(Text.literal(String.format("%.2f", v)));
     }
   }
+
   @Override
   protected void applyValue() {
-    if (onChange != null) {
+    if (onChange != null)
       onChange.accept(getRealValue());
+  }
+
+
+  @Override
+  public void renderWidget(DrawContext ctx, int mx, int my, float delta) {
+    int x = getX(), y = getY(), w = getWidth(), h = getHeight();
+
+
+    int trackY = y + h / 2 - 2;
+    int trackH = 4;
+    ctx.fill(x, trackY, x + w, trackY + trackH, C_TRACK);
+
+
+    int fillW = (int) (this.value * w);
+    if (fillW > 0) {
+      ctx.fill(x, trackY, x + fillW, trackY + trackH, C_FILL);
     }
+
+
+    int kw = 8, kh = h;
+    int kx = x + fillW - kw / 2;
+    kx = Math.max(x, Math.min(x + w - kw, kx));
+    int ky = y;
+    ctx.fill(kx, ky, kx + kw, ky + kh, C_KNOB_EDGE);
+    ctx.fill(kx + 1, ky + 1, kx + kw - 1, ky + kh - 1, C_KNOB);
   }
 }

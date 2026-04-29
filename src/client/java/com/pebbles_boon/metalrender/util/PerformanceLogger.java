@@ -1,7 +1,10 @@
 package com.pebbles_boon.metalrender.util;
+
 import com.pebbles_boon.metalrender.config.MetalRenderConfig;
-import net.minecraft.client.MinecraftClient;
+
 public final class PerformanceLogger {
+  private static final long NORMAL_LOG_INTERVAL = 5000;
+  private static final long DEBUG_LOG_INTERVAL = 1000;
   private long frameCount = 0;
   private long totalChunksProcessed = 0;
   private long totalChunksDrawn = 0;
@@ -13,7 +16,7 @@ public final class PerformanceLogger {
   private double avgFrameTime = 0;
   private double currentFPS = 0;
   private long lastLogTime = System.currentTimeMillis();
-  private static final long LOG_INTERVAL = 1000;
+
   public void startFrame() {
     frameStartTime = System.nanoTime();
     if (lastFrameStartTime != 0) {
@@ -21,6 +24,7 @@ public final class PerformanceLogger {
     }
     lastFrameStartTime = frameStartTime;
   }
+
   public void endFrame(int chunksProcessed, int chunksDrawn, int frustumCulled,
       int occlusionCulled) {
     long frameEndTime = System.nanoTime();
@@ -38,12 +42,20 @@ public final class PerformanceLogger {
     avgFrameTime = avgFrameTime * 0.95 + frameTime * 0.05;
     currentFPS = 1000.0 / Math.max(avgFrameTime, 0.1);
     long currentTime = System.currentTimeMillis();
-    if (currentTime - lastLogTime >= LOG_INTERVAL) {
+    long interval = MetalRenderConfig.isDeepDebugActive() ? DEBUG_LOG_INTERVAL : NORMAL_LOG_INTERVAL;
+    if (currentTime - lastLogTime >= interval) {
       logPerformanceStats();
       lastLogTime = currentTime;
     }
   }
+
   private void logPerformanceStats() {
+    if (!MetalRenderConfig.isDeepDebugActive()) {
+      MetalLogger.info("[PERF] FPS: %.1f | FrameTime: %.2fms",
+          currentFPS, avgFrameTime);
+      resetCounters();
+      return;
+    }
     double cullingEfficiency = totalChunksProcessed > 0
         ? (double) (totalFrustumCulled + totalOcclusionCulled) /
             totalChunksProcessed * 100
@@ -53,33 +65,38 @@ public final class PerformanceLogger {
         currentFPS, avgFrameTime, totalChunksProcessed,
         totalChunksDrawn, totalFrustumCulled, totalOcclusionCulled,
         cullingEfficiency);
-    MetalLogger.info(
-        "[PERF][DQ] Dynamic=%s | Target=%.1fms | Scale=%.2f | ViewDist=%d",
-        MetalRenderConfig.dynamicQuality() ? "on" : "off",
-        MetalRenderConfig.dqTargetFrameMs(),
-        MetalRenderConfig.resolutionScale(),
-        MinecraftClient.getInstance().options.getViewDistance().getValue());
-    if (currentFPS < 60) {
-      MetalLogger.info(
-          "[PERF] Performance below 60 FPS lets mess with stuff");
+    try {
+      MetalLogger.info("[PERF][DQ] Scale=%.2f",
+          MetalRenderConfig.resolutionScale());
+    } catch (Exception ignored) {
     }
+    Runtime rt = Runtime.getRuntime();
+    long usedMb = (rt.totalMemory() - rt.freeMemory()) / (1024 * 1024);
+    long maxMb = rt.maxMemory() / (1024 * 1024);
+    MetalLogger.info("[PERF][MEM] Heap=%d/%dMB Frames=%d",
+        usedMb, maxMb, frameCount);
     resetCounters();
   }
+
   private void resetCounters() {
     totalChunksProcessed = 0;
     totalChunksDrawn = 0;
     totalFrustumCulled = 0;
     totalOcclusionCulled = 0;
   }
+
   public double getCurrentFPS() {
     return currentFPS;
   }
+
   public double getAvgFrameTime() {
     return avgFrameTime;
   }
+
   public double getLastFrameTime() {
     return lastFrameTime > 0.0 ? lastFrameTime : avgFrameTime;
   }
+
   public long getFrameCount() {
     return frameCount;
   }

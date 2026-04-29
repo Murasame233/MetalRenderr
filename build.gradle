@@ -1,5 +1,5 @@
 plugins {
-    id 'fabric-loom' version '1.14-SNAPSHOT'
+    id 'fabric-loom' version '1.15-SNAPSHOT'
     id 'maven-publish'
 }
 
@@ -28,14 +28,14 @@ repositories {
 dependencies {
     minecraft "com.mojang:minecraft:1.21.11"
     mappings "net.fabricmc:yarn:1.21.11+build.3:v2"
-    modImplementation "net.fabricmc:fabric-loader:0.18.0"
+    modImplementation "net.fabricmc:fabric-loader:0.18.4"
     modImplementation "net.fabricmc.fabric-api:fabric-api:0.139.4+1.21.11"
     modImplementation "org.lwjgl:lwjgl:3.3.3"
     modImplementation "org.lwjgl:lwjgl-glfw:3.3.3"
     modImplementation "org.lwjgl:lwjgl:3.3.3:natives-macos"
     modImplementation "org.lwjgl:lwjgl-glfw:3.3.3:natives-macos"
     modImplementation 'org.joml:joml:1.10.5'
-    modImplementation "maven.modrinth:sodium:mc1.21.11-0.8.0-fabric"
+    modCompileOnly "maven.modrinth:sodium:mc1.21.11-0.8.0-fabric"
 }
 
 loom {
@@ -48,6 +48,11 @@ loom {
             vmArg "-Djava.library.path=${projectDir}/src/main/resources"
             vmArg "--enable-preview"
             vmArg "--enable-native-access=ALL-UNNAMED"
+            vmArg "-XX:+UseZGC"
+            vmArg "-XX:+ZGenerational"
+            vmArg "-Xmx8g"
+            vmArg "-Xms2g"
+            vmArg "-XX:+AlwaysPreTouch"
             
             if (project.hasProperty('gl2metal')) {
                 vmArg "-Dmetalrender.gl2metal=true"
