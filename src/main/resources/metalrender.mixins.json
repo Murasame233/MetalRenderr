@@ -25,9 +25,14 @@
     "ClientWorldMixin",
     "OptionsScreenMixin",
     "ChunkLoadMixin",
+    "SpriteContentsTickerMixin",
+    "WeatherRenderMixin",
     "accessor.BillboardParticleAccessor",
     "accessor.ParticleAccessor",
-    "accessor.ParticleManagerAccessor"
+    "accessor.ParticleManagerAccessor",
+    "accessor.LivingEntityRendererAccessor",
+    "accessor.ClientPlayerInteractionManagerAccessor",
+    "accessor.WorldRendererCrackAccessor"
   ],
   "injectors": {
     "defaultRequire": 0

@@ -15,7 +15,7 @@ struct EntityVertexOut {
     float3 normal;
     float2 lightUV;
     float2 overlay;
-    float3 worldPos;
+    float  viewDistance;
 };
 struct EntityInstanceData {
     float4x4 modelMatrix;
@@ -39,10 +39,15 @@ vertex EntityVertexOut vertex_entity(
     out.position = projection * viewPos;
     out.texCoord = float2(v.texCoord) / 32768.0;
     out.color    = float4(v.color) / 255.0;
-    out.normal   = normalize(float3(v.normal.xyz) / 127.0 - 1.0);
+
+
+
+    out.normal   = normalize(float3((int8_t)v.normal.x,
+                                    (int8_t)v.normal.y,
+                                    (int8_t)v.normal.z) / 127.0f);
     out.lightUV  = float2(v.lightUV) / 256.0;
     out.overlay  = float2(v.overlay.x, v.overlay.y);
-    out.worldPos = pos;
+    out.viewDistance = length(viewPos.xyz);
     return out;
 }
 vertex EntityVertexOut vertex_entity_instanced(
@@ -62,26 +67,30 @@ vertex EntityVertexOut vertex_entity_instanced(
     out.position = projection * viewPos;
     out.texCoord = float2(v.texCoord) / 32768.0;
     out.color    = float4(v.color) / 255.0 * inst.tintColor;
-    out.normal   = normalize((inst.modelMatrix * float4(float3(v.normal.xyz) / 127.0 - 1.0, 0.0)).xyz);
+    out.normal   = normalize((inst.modelMatrix * float4(float3((int8_t)v.normal.x,
+                                                               (int8_t)v.normal.y,
+                                                               (int8_t)v.normal.z) / 127.0f, 0.0)).xyz);
     out.lightUV  = float2(v.lightUV) / 256.0;
     out.overlay  = inst.overlayParams.xy;
-    out.worldPos = worldPos.xyz;
+    out.viewDistance = length(viewPos.xyz);
     return out;
 }
 fragment float4 fragment_entity(
     EntityVertexOut in [[stage_in]],
     texture2d<float> entityTex  [[texture(0)]],
+    texture2d<float> lightmap   [[texture(1)]],
     constant float4& overlayParams [[buffer(5)]]
 ) {
     constexpr sampler texSampler(filter::nearest, address::clamp_to_edge);
     float4 texColor = entityTex.sample(texSampler, in.texCoord);
-    float4 baseColor = (texColor.a > 0.01) ? texColor * in.color : in.color;
+    if (texColor.a < 0.1) discard_fragment();
+    float4 baseColor = texColor * in.color;
     float3 lightDir = normalize(float3(0.2, 1.0, 0.5));
     float nDotL     = max(dot(in.normal, lightDir), 0.0);
-    baseColor.rgb *= (0.4 + 0.6 * nDotL);
-    float blockLight = clamp(in.lightUV.x, 0.0, 1.0);
-    float skyLight   = clamp(in.lightUV.y, 0.0, 1.0);
-    baseColor.rgb *= max(max(blockLight, skyLight), 0.5);
+
+    baseColor.rgb *= (0.5 + 0.5 * nDotL);
+    float4 light = lightmap.sample(texSampler, in.lightUV);
+    baseColor.rgb *= light.rgb;
     float hurtTime = overlayParams.x;
     if (hurtTime > 0.0) {
         baseColor.rgb = mix(baseColor.rgb, float3(1.0, 0.0, 0.0), clamp(hurtTime, 0.0, 0.6));
@@ -90,25 +99,41 @@ fragment float4 fragment_entity(
     if (whiteFlash > 0.0) {
         baseColor.rgb = mix(baseColor.rgb, float3(1.0), clamp(whiteFlash, 0.0, 1.0));
     }
-    return float4(baseColor.rgb, 1.0);
+
+    float waterFog = overlayParams.z;
+    if (waterFog > 0.0) {
+        float dist = in.viewDistance;
+        float fogFactor = clamp(dist / 32.0, 0.0, 0.85);
+        baseColor.rgb = mix(baseColor.rgb, float3(0.05, 0.12, 0.3), fogFactor);
+        baseColor.a = mix(baseColor.a, 0.3, fogFactor);
+    }
+    return float4(baseColor.rgb, baseColor.a);
 }
 fragment float4 fragment_entity_translucent(
     EntityVertexOut in [[stage_in]],
     texture2d<float> entityTex  [[texture(0)]],
+    texture2d<float> lightmap   [[texture(1)]],
     constant float4& overlayParams [[buffer(5)]]
 ) {
     constexpr sampler texSampler(filter::linear, address::clamp_to_edge);
     float4 texColor = entityTex.sample(texSampler, in.texCoord);
-    float4 baseColor = (texColor.a > 0.004) ? texColor * in.color : in.color;
+    if (texColor.a < 0.004) discard_fragment();
+    float4 baseColor = texColor * in.color;
     float3 lightDir = normalize(float3(0.2, 1.0, 0.5));
     float nDotL     = max(dot(in.normal, lightDir), 0.0);
-    baseColor.rgb *= (0.4 + 0.6 * nDotL);
-    float blockLight = clamp(in.lightUV.x, 0.0, 1.0);
-    float skyLight   = clamp(in.lightUV.y, 0.0, 1.0);
-    baseColor.rgb *= max(max(blockLight, skyLight), 0.5);
+    baseColor.rgb *= (0.5 + 0.5 * nDotL);
+    float4 light = lightmap.sample(texSampler, in.lightUV);
+    baseColor.rgb *= light.rgb;
     float hurtTime = overlayParams.x;
     if (hurtTime > 0.0) {
         baseColor.rgb = mix(baseColor.rgb, float3(1.0, 0.0, 0.0), clamp(hurtTime, 0.0, 0.6));
+    }
+    float waterFog = overlayParams.z;
+    if (waterFog > 0.0) {
+        float dist = in.viewDistance;
+        float fogFactor = clamp(dist / 32.0, 0.0, 0.85);
+        baseColor.rgb = mix(baseColor.rgb, float3(0.05, 0.12, 0.3), fogFactor);
+        baseColor.a *= (1.0 - fogFactor * 0.4);
     }
     return baseColor;
 }
@@ -119,7 +144,8 @@ fragment float4 fragment_entity_emissive(
 ) {
     constexpr sampler texSampler(filter::nearest, address::clamp_to_edge);
     float4 texColor = entityTex.sample(texSampler, in.texCoord);
-    float4 baseColor = (texColor.a > 0.01) ? texColor * in.color : in.color;
+    if (texColor.a < 0.1) discard_fragment();
+    float4 baseColor = texColor * in.color;
     float hurtTime = overlayParams.x;
     if (hurtTime > 0.0) {
         baseColor.rgb = mix(baseColor.rgb, float3(1.0, 0.0, 0.0), clamp(hurtTime, 0.0, 0.6));
@@ -135,14 +161,24 @@ fragment float4 fragment_entity_outline(
 fragment float4 fragment_particle(
     EntityVertexOut in [[stage_in]],
     texture2d<float> entityTex  [[texture(0)]],
+    texture2d<float> lightmap   [[texture(1)]],
     constant float4& overlayParams [[buffer(5)]]
 ) {
     constexpr sampler texSampler(filter::nearest, mip_filter::nearest, address::clamp_to_edge);
     float4 texColor = entityTex.sample(texSampler, in.texCoord);
-    float4 baseColor = (texColor.a > 0.004) ? texColor * in.color : in.color;
-    float blockLight = clamp(in.lightUV.x, 0.0, 1.0);
-    float skyLight   = clamp(in.lightUV.y, 0.0, 1.0);
-    baseColor.rgb *= max(max(blockLight, skyLight), 0.3);
+
+
+    if (texColor.a < 0.01) discard_fragment();
+    float4 baseColor = texColor * in.color;
+    float4 light = lightmap.sample(texSampler, in.lightUV);
+    baseColor.rgb *= light.rgb;
+    float waterFog = overlayParams.z;
+    if (waterFog > 0.0) {
+        float dist = in.viewDistance;
+        float fogFactor = clamp(dist / 24.0, 0.0, 0.85);
+        baseColor.rgb = mix(baseColor.rgb, float3(0.05, 0.12, 0.3), fogFactor);
+        baseColor.a *= (1.0 - fogFactor * 0.5);
+    }
     return baseColor;
 }
 fragment float4 fragment_entity_shadow(

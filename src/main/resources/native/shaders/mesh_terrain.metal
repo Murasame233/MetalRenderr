@@ -1,6 +1,18 @@
+
+
+
+
+
+
+
+
+
+
 #include <metal_stdlib>
 #include <metal_mesh>
 using namespace metal;
+
+
 struct CameraUniforms {
     float4x4 viewProjection;
     float4x4 projection;
@@ -13,23 +25,22 @@ struct CameraUniforms {
     uint     frameIndex;
     uint     hizMipCount;
     uint     totalChunks;
-    uint     _pad;
+    float    waterFog;
 };
-struct MeshletDescriptor {
-    float4   aabbMin;          
-    float4   aabbMax;          
-    uint     vertexOffset;     
-    uint     vertexCount;      
-    uint     indexOffset;       
-    uint     indexCount;        
-    uint     chunkIndex;       
-    uint     lodLevel;         
-    uint     geometryCategory; 
-    uint     _pad;
+
+
+struct ChunkMeshlet {
+    uint  baseVertexOffset;
+    uint  vertexCount;
+    float worldX;
+    float worldY;
+    float worldZ;
+    uint  lodLevel;
+    uint  _pad0;
+    uint  _pad1;
 };
-struct ChunkUniforms {
-    float4   chunkOffset;      
-};
+
+
 struct InhouseTerrainVertex {
     packed_short3  position;
     packed_ushort2 texCoord;
@@ -37,128 +48,236 @@ struct InhouseTerrainVertex {
     uchar          packedLight;
     uchar          normalIndex;
 };
+
+
+
+constant float kGamma[16] = {
+    0.0f,
+    0.38157f,
+    0.47038f,
+    0.53589f,
+    0.59018f,
+    0.63728f,
+    0.65132f,
+    0.69210f,
+    0.72984f,
+    0.76496f,
+    0.79780f,
+    0.82860f,
+    0.85752f,
+    0.88474f,
+    0.91038f,
+    1.00000f,
+};
+
+
+constant half kFaceShade[6] = {
+    half(0.5),
+    half(1.0),
+    half(0.8),
+    half(0.8),
+    half(0.6),
+    half(0.6),
+};
+
+
 struct MeshVertexOut {
-    float4 position [[position]];
-    half2  texCoord;
+    float4 position    [[position]];
+    float2 texCoord;
     half4  color;
-    half2  lightUV;
+    half   light;
+    uint   normalIndex [[flat]];
+    float3 worldPos;
 };
-constant float3 kNormalTable[6] = {
-    float3( 0,  1,  0),  
-    float3( 0, -1,  0),  
-    float3( 1,  0,  0),  
-    float3(-1,  0,  0),  
-    float3( 0,  0,  1),  
-    float3( 0,  0, -1),  
-};
+
+
 struct MeshletPayload {
-    uint meshletIndex;
+    uint chunkIndex;
 };
-[[object]]
+
+
+
+
+
+
+
+
+[[object, max_total_threads_per_threadgroup(1)]]
 void object_terrain(
-    object_data MeshletPayload&              payload    [[payload]],
-    mesh_grid_properties                     grid,
-    device const MeshletDescriptor*          meshlets   [[buffer(0)]],
-    constant CameraUniforms&                 camera     [[buffer(1)]],
+    object_data MeshletPayload&   payload  [[payload]],
+    mesh_grid_properties          grid,
+    device const ChunkMeshlet*    meshlets [[buffer(0)]],
+    constant CameraUniforms&      camera   [[buffer(1)]],
     uint tid [[thread_position_in_grid]]
 ) {
     if (tid >= camera.totalChunks) {
         grid.set_threadgroups_per_grid(uint3(0, 0, 0));
         return;
     }
-    MeshletDescriptor m = meshlets[tid];
-    float3 minC = m.aabbMin.xyz;
-    float3 maxC = m.aabbMax.xyz;
-    for (uint i = 0; i < 6; i++) {
+    ChunkMeshlet m = meshlets[tid];
+    if (m.vertexCount == 0u) {
+        grid.set_threadgroups_per_grid(uint3(0, 0, 0));
+        return;
+    }
+
+    float3 minC = float3(m.worldX, m.worldY, m.worldZ);
+    float3 maxC = minC + float3(16.0, 16.0, 16.0);
+    for (uint i = 0u; i < 6u; i++) {
         float4 plane = camera.frustumPlanes[i];
-        float3 pVertex;
-        pVertex.x = (plane.x > 0.0) ? maxC.x : minC.x;
-        pVertex.y = (plane.y > 0.0) ? maxC.y : minC.y;
-        pVertex.z = (plane.z > 0.0) ? maxC.z : minC.z;
-        if (dot(plane.xyz, pVertex) + plane.w < 0.0) {
+        float3 pv;
+        pv.x = (plane.x > 0.0) ? maxC.x : minC.x;
+        pv.y = (plane.y > 0.0) ? maxC.y : minC.y;
+        pv.z = (plane.z > 0.0) ? maxC.z : minC.z;
+        if (dot(plane.xyz, pv) + plane.w < 0.0) {
             grid.set_threadgroups_per_grid(uint3(0, 0, 0));
             return;
         }
     }
-    payload.meshletIndex = tid;
-    grid.set_threadgroups_per_grid(uint3(1, 1, 1));
+    payload.chunkIndex = tid;
+    uint numGroups = (m.vertexCount + 255u) / 256u;
+    grid.set_threadgroups_per_grid(uint3(numGroups, 1, 1));
 }
-constant uint kMaxMeshletVertices   = 256;
-constant uint kMaxMeshletPrimitives = 170;
-[[mesh]]
+
+
+
+
+
+
+
+
+
+constant uint kMaxMeshVerts = 256u;
+constant uint kMaxMeshTris  = 128u;
+
+[[mesh, max_total_threads_per_threadgroup(256)]]
 void mesh_terrain(
-    metal::mesh<MeshVertexOut, void, 256, 170, metal::topology::triangle> output,
-    const object_data MeshletPayload&     payload    [[payload]],
-    device const MeshletDescriptor*       meshlets   [[buffer(0)]],
-    constant CameraUniforms&              camera     [[buffer(1)]],
-    device const InhouseTerrainVertex*    vertices   [[buffer(2)]],
-    device const uint*                    indices    [[buffer(3)]],
-    device const ChunkUniforms*           chunks     [[buffer(4)]],
-    uint tid  [[thread_index_in_threadgroup]],
-    uint tgSize [[threads_per_threadgroup]]
+    metal::mesh<MeshVertexOut, void, kMaxMeshVerts, kMaxMeshTris,
+                metal::topology::triangle>      output,
+    const object_data MeshletPayload&           payload  [[payload]],
+    device const ChunkMeshlet*                  meshlets [[buffer(0)]],
+    constant CameraUniforms&                    camera   [[buffer(1)]],
+    device const InhouseTerrainVertex*          vertices [[buffer(2)]],
+    uint tid   [[thread_index_in_threadgroup]],
+    uint tgIdx [[threadgroup_position_in_grid]]
 ) {
-    MeshletDescriptor m = meshlets[payload.meshletIndex];
-    ChunkUniforms chunk = chunks[m.chunkIndex];
-    uint numVerts = min(m.vertexCount, kMaxMeshletVertices);
-    uint numTris  = min(m.indexCount / 3u, kMaxMeshletPrimitives);
-    output.set_primitive_count(numTris);
-    for (uint i = tid; i < numVerts; i += tgSize) {
-        InhouseTerrainVertex v = vertices[m.vertexOffset + i];
-        MeshVertexOut out;
+    ChunkMeshlet m  = meshlets[payload.chunkIndex];
+    uint vertStart  = tgIdx * kMaxMeshVerts;
+    uint vertEnd    = min(vertStart + kMaxMeshVerts, m.vertexCount);
+    uint localVerts = vertEnd - vertStart;
+    uint localQuads = localVerts / 4u;
+    uint tris       = localQuads * 2u;
+    output.set_primitive_count(tris);
+
+    float3 chunkOrig = float3(m.worldX, m.worldY, m.worldZ);
+    float  skyBr     = camera.cameraPosition.w;
+
+
+    for (uint lv = tid; lv < localVerts; lv += kMaxMeshVerts) {
+        uint gv = m.baseVertexOffset + vertStart + lv;
+        InhouseTerrainVertex v = vertices[gv];
+
         float3 localPos = float3(short3(v.position)) / 256.0;
-        float3 worldPos = localPos + chunk.chunkOffset.xyz;
+        float3 worldPos = localPos + chunkOrig;
         float4 viewPos  = camera.modelView * float4(worldPos, 1.0);
-        out.position = camera.projection * viewPos;
-        out.texCoord = half2(float2(v.texCoord) / 65535.0);
-        out.color    = half4(float4(v.color) / 255.0);
-        half lightVal = half(float(v.packedLight) / 255.0);
-        out.lightUV  = half2(lightVal, lightVal);
-        output.set_vertex(i, out);
+
+        MeshVertexOut out;
+        out.position    = camera.projection * viewPos;
+        out.texCoord    = float2(v.texCoord) / 65535.0f;
+        out.color       = half4(float4(v.color) / 255.0f);
+
+        uint pl      = uint(v.packedLight);
+        half blockL  = half(kGamma[pl & 0xFu]);
+        half skyL    = half(kGamma[(pl >> 4u) & 0xFu]);
+        out.light    = half(max(float(blockL), float(skyL) * skyBr));
+        out.normalIndex = uint(v.normalIndex & 0x7u);
+        out.worldPos    = worldPos;
+
+        output.set_vertex(lv, out);
     }
-    for (uint i = tid; i < numTris; i += tgSize) {
-        uint baseIdx = m.indexOffset + i * 3;
-        uint i0 = indices[baseIdx + 0];
-        uint i1 = indices[baseIdx + 1];
-        uint i2 = indices[baseIdx + 2];
-        uint localI0 = i0 - m.vertexOffset;
-        uint localI1 = i1 - m.vertexOffset;
-        uint localI2 = i2 - m.vertexOffset;
-        output.set_index(i * 3 + 0, localI0);
-        output.set_index(i * 3 + 1, localI1);
-        output.set_index(i * 3 + 2, localI2);
+
+
+
+
+    for (uint lq = tid; lq < localQuads; lq += kMaxMeshVerts) {
+        uint b = lq * 4u;
+        output.set_index(lq * 6u + 0u, b + 0u);
+        output.set_index(lq * 6u + 1u, b + 1u);
+        output.set_index(lq * 6u + 2u, b + 2u);
+        output.set_index(lq * 6u + 3u, b + 0u);
+        output.set_index(lq * 6u + 4u, b + 2u);
+        output.set_index(lq * 6u + 5u, b + 3u);
     }
 }
+
+
+
+
+
 fragment half4 fragment_terrain_mesh_opaque(
     MeshVertexOut in [[stage_in]],
-    texture2d<half> blockAtlas [[texture(0)]]
+    texture2d<half> blockAtlas [[texture(0)]],
+    constant CameraUniforms& camera [[buffer(1)]]
 ) {
-    constexpr sampler s(mag_filter::nearest, min_filter::nearest, mip_filter::nearest);
-    half4 texColor = blockAtlas.sample(s, float2(in.texCoord));
-    if (texColor.a < half(0.5) && in.color.a >= half(0.998)) discard_fragment();
-    half4 baseColor = texColor * in.color;
-    half light = max(max(in.lightUV.x, in.lightUV.y), half(0.1));
-    baseColor.rgb *= light;
-    half outAlpha = in.color.a < half(0.99) ? half(in.color.a) : half(1.0);
-    return half4(baseColor.rgb, outAlpha);
+    constexpr sampler s(mag_filter::nearest, min_filter::nearest,
+                        mip_filter::nearest);
+    half4 tex = blockAtlas.sample(s, float2(in.texCoord));
+    half  va  = in.color.a;
+
+
+
+    if (tex.a < half(0.5h)) {
+        if (va > half(0.994h) && va < half(0.998h)) {
+            tex.a = half(1.0h);
+        } else {
+            discard_fragment();
+        }
+    }
+    half4 col = tex * in.color;
+
+    col.rgb *= max(in.light, half(0.04h)) * kFaceShade[min(in.normalIndex, 5u)];
+
+    if (camera.waterFog > 0.0f) {
+        half dist = half(fast::length(in.worldPos));
+        half fog  = clamp(dist / half(32.0h), half(0.0h), half(0.85h));
+        col.rgb   = mix(col.rgb, half3(0.05h, 0.12h, 0.3h), fog);
+    }
+    return half4(col.rgb, half(1.0h));
 }
+
 fragment half4 fragment_terrain_mesh_cutout(
     MeshVertexOut in [[stage_in]],
-    texture2d<half> blockAtlas [[texture(0)]]
+    texture2d<half> blockAtlas [[texture(0)]],
+    constant CameraUniforms& camera [[buffer(1)]]
 ) {
-    constexpr sampler s(mag_filter::nearest, min_filter::nearest, mip_filter::nearest);
-    half4 texColor = blockAtlas.sample(s, float2(in.texCoord));
-    if (texColor.a < half(0.5)) discard_fragment();
-    half4 baseColor = texColor * in.color;
-    half light = max(max(in.lightUV.x, in.lightUV.y), half(0.1));
-    baseColor.rgb *= light;
-    return half4(baseColor.rgb, half(1.0));
+    constexpr sampler s(mag_filter::nearest, min_filter::nearest,
+                        mip_filter::nearest);
+    half4 tex = blockAtlas.sample(s, float2(in.texCoord));
+    if (tex.a < half(0.5h)) discard_fragment();
+    half4 col = tex * in.color;
+    col.rgb *= max(in.light, half(0.04h)) * kFaceShade[min(in.normalIndex, 5u)];
+    if (camera.waterFog > 0.0f) {
+        half dist = half(fast::length(in.worldPos));
+        half fog  = clamp(dist / half(32.0h), half(0.0h), half(0.85h));
+        col.rgb   = mix(col.rgb, half3(0.05h, 0.12h, 0.3h), fog);
+    }
+    return half4(col.rgb, half(1.0h));
 }
+
 fragment half4 fragment_terrain_mesh_emissive(
     MeshVertexOut in [[stage_in]],
-    texture2d<half> blockAtlas [[texture(0)]]
+    texture2d<half> blockAtlas [[texture(0)]],
+    constant CameraUniforms& camera [[buffer(1)]]
 ) {
-    constexpr sampler s(mag_filter::nearest, min_filter::nearest, mip_filter::nearest);
-    half4 texColor = blockAtlas.sample(s, float2(in.texCoord));
-    if (texColor.a < half(0.1)) discard_fragment();
-    return texColor * in.color;
+    constexpr sampler s(mag_filter::nearest, min_filter::nearest,
+                        mip_filter::nearest);
+    half4 tex = blockAtlas.sample(s, float2(in.texCoord));
+    if (tex.a < half(0.1h)) discard_fragment();
+    half4 col = tex * in.color;
+
+    if (camera.waterFog > 0.0f) {
+        half dist = half(fast::length(in.worldPos));
+        half fog  = clamp(dist / half(32.0h), half(0.0h), half(0.85h));
+        col.rgb   = mix(col.rgb, half3(0.05h, 0.12h, 0.3h), fog);
+    }
+    return col;
 }

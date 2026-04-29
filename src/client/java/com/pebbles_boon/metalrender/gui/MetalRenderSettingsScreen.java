@@ -1,8 +1,10 @@
 package com.pebbles_boon.metalrender.gui;
+
 import com.pebbles_boon.metalrender.MetalRenderClient;
 import com.pebbles_boon.metalrender.config.MetalRenderConfig;
 import com.pebbles_boon.metalrender.gui.components.MetalOptionSlider;
 import com.pebbles_boon.metalrender.nativebridge.MetalHardwareChecker;
+import com.pebbles_boon.metalrender.nativebridge.NativeBridge;
 import com.pebbles_boon.metalrender.render.MetalWorldRenderer;
 import java.util.ArrayList;
 import java.util.List;
@@ -14,734 +16,720 @@ import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.option.GameOptions;
 import net.minecraft.client.option.SimpleOption;
 import net.minecraft.text.Text;
+
+
 public class MetalRenderSettingsScreen extends Screen {
-  private static final int BG_DARK = 0x40000000;
-  private static final int PANEL_BG = 0x66000000;
-  private static final int PANEL_BORDER = 0x88FFFFFF;
-  private static final int TAB_SELECTED = 0x55FFFFFF;
-  private static final int TAB_HOVER = 0x33FFFFFF;
-  private static final int TAB_NORMAL = 0x11FFFFFF;
-  private static final int ROW_BG_EVEN = 0x1AFFFFFF;
-  private static final int ROW_BG_ODD = 0x0AFFFFFF;
-  private static final int ROW_HOVER = 0x2AFFFFFF;
-  private static final int ACCENT = 0xFF007AFF;
-  private static final int TEXT_BRIGHT = 0xFFFFFFFF;
-  private static final int TEXT_DIM = 0xFFAAAAAA;
-  private static final int TEXT_ON = 0xFF34C759;
-  private static final int TEXT_OFF = 0xFFFF3B30;
-  private static final int HEADER_COLOR = 0xFFFFFFFF;
-  private static final int SCROLLBAR_BG = 0x44FFFFFF;
-  private static final int SCROLLBAR_FG = 0x88FFFFFF;
-  private static final int TAB_WIDTH = 140;
-  private static final int TAB_HEIGHT = 36;
-  private static final int ROW_HEIGHT = 36;
-  private static final int HEADER_HEIGHT = 45;
-  private static final int PAD = 16;
-  private static final int FOOTER_HEIGHT = 40;
+
+
+  private static final int C_PANEL = 0xFF1E1E20;
+  private static final int C_HEADER = 0xFF161618;
+  private static final int C_TAB_BAR = 0xFF252527;
+  private static final int C_TAB_ACTIVE = 0xFF007AFF;
+  private static final int C_TAB_HOVER = 0xFF38383A;
+  private static final int C_CARD = 0xFF2C2C2E;
+  private static final int C_CARD_HOVER = 0xFF38383A;
+  private static final int C_DIVIDER = 0xFF3A3A3C;
+  private static final int C_TEXT_PRI = 0xFFFFFFFF;
+  private static final int C_TEXT_SEC = 0xFF8E8E93;
+  private static final int C_TEXT_ACCENT = 0xFF007AFF;
+  private static final int C_VAL_ON = 0xFF30D158;
+  private static final int C_VAL_OFF = 0xFFFF453A;
+  private static final int C_PILL_ON = 0xFF34C759;
+  private static final int C_PILL_OFF = 0xFF48484A;
+  private static final int C_SCROLLTHUMB = 0xFF636366;
+
+
+  private static final int PANEL_W = 700;
+  private static final int PANEL_H = 460;
+  private static final int HDR_H = 38;
+  private static final int TAB_H = 32;
+  private static final int FOOT_H = 36;
+  private static final int CARD_H = 38;
+  private static final int CARD_GAP = 1;
+  private static final int SEC_H = 28;
+  private static final int HPAD = 10;
+  private static final int PILL_W = 40;
+  private static final int PILL_H = 20;
+  private static final int SLIDER_W = 120;
+  private static final int SLIDER_H = 12;
+
+  private static final String[] TABS = {
+      "Video", "MetalRender", "Quality", "Performance", "Advanced", "LOD"
+  };
+
+
   private final Screen parent;
   private MetalRenderConfig config;
-  private int selectedPage;
-  private int scrollOffset;
-  private int maxScroll;
-  private boolean draggingScrollbar;
-  private int pendingRenderDistance;
-  private int pendingSimulationDistance;
+  private int selectedTab = 0;
+  private int scrollOffset = 0;
+  private int maxScroll = 0;
+  private boolean dragging = false;
+  private int dragOriginY, dragOriginOff;
+
+
+  private int px, py, pw, ph;
+  private int cx, cy, cw, ch;
+
+
+  private int pendingRenderDist;
+  private int pendingSimDist;
   private int pendingMaxFps;
   private int pendingGuiScale;
   private double pendingBrightness;
   private int pendingFov;
   private double pendingDistortion;
   private double pendingFovEffects;
-  private int pendingZone1Radius;
-  private int pendingZone2Radius;
-  private float pendingLodTransition;
-  private int pendingBiomeDetail;
   private int pendingTargetFps;
-  private int pendingMaxMemoryMb;
-  private int pendingLod1Distance;
-  private int pendingLod2Distance;
-  private int pendingLod3Distance;
-  private int pendingLod4Distance;
+  private int pendingMaxMemMb;
+  private int pendingLod1, pendingLod2, pendingLod3, pendingLod4;
   private boolean pendingLodEnabled;
-  private MetalOptionSlider renderDistanceSlider;
-  private MetalOptionSlider simulationDistanceSlider;
-  private MetalOptionSlider maxFpsSlider;
-  private MetalOptionSlider guiScaleSlider;
-  private MetalOptionSlider brightnessSlider;
-  private MetalOptionSlider fovSlider;
-  private MetalOptionSlider distortionSlider;
-  private MetalOptionSlider fovEffectsSlider;
-  private MetalOptionSlider zone1RadiusSlider;
-  private MetalOptionSlider zone2RadiusSlider;
-  private MetalOptionSlider lodTransitionSlider;
-  private MetalOptionSlider targetFpsSlider;
-  private MetalOptionSlider maxMemorySlider;
-  private MetalOptionSlider biomeDetailSlider;
-  private MetalOptionSlider lod1DistanceSlider;
-  private MetalOptionSlider lod2DistanceSlider;
-  private MetalOptionSlider lod3DistanceSlider;
-  private MetalOptionSlider lod4DistanceSlider;
-  private int renderDistanceRow = -1;
-  private int simulationDistanceRow = -1;
-  private int maxFpsRow = -1;
-  private int guiScaleRow = -1;
-  private int brightnessRow = -1;
-  private int fovRow = -1;
-  private int distortionRow = -1;
-  private int fovEffectsRow = -1;
-  private int zone1Row = -1;
-  private int zone2Row = -1;
-  private int transitionRow = -1;
-  private int targetFpsRow = -1;
-  private int maxMemoryRow = -1;
-  private int biomeDetailRow = -1;
-  private int lod1DistanceRow = -1;
-  private int lod2DistanceRow = -1;
-  private int lod3DistanceRow = -1;
-  private int lod4DistanceRow = -1;
-  private final String[] pages = {"Video",       "MetalRender", "Quality",
-                                  "Performance", "Advanced",    "LOD"};
-  private final List<SettingRow> currentRows = new ArrayList<>();
+  private boolean pendingDeepDebugNextRun;
+
+
+
+
+
+  private int initialRenderDist;
+  private int initialLod1, initialLod2, initialLod3, initialLod4;
+  private boolean initialLodEnabled;
+  private int initialBiomeDetail;
+  private int initialLeafCulling;
+  private boolean initialSmoothLighting;
+
+
+  private final List<Row> rows = new ArrayList<>();
+
+
+  private enum RT {
+    SECTION, TOGGLE, CYCLE, INFO, VANILLA, SLIDER
+  }
+
+  private static class Row {
+    final RT type;
+    final String label;
+    String value;
+    Runnable action;
+    SimpleOption<?> vanillaOpt;
+    MetalOptionSlider slider;
+    int renderY = 0;
+
+    Row(RT t, String l) {
+      type = t;
+      label = l;
+    }
+
+    int h() {
+      return type == RT.SECTION ? SEC_H : CARD_H;
+    }
+
+    int gap() {
+      return type == RT.SECTION ? 0 : CARD_GAP;
+    }
+  }
+
+
+
+
+
   public MetalRenderSettingsScreen(Screen parent) {
     super(Text.literal("MetalRender Settings"));
     this.parent = parent;
-    this.selectedPage = 0;
-    this.scrollOffset = 0;
   }
+
+
+
+
+
   @Override
   protected void init() {
     config = MetalRenderClient.getConfig();
     if (config == null)
       config = MetalRenderConfig.load();
-    GameOptions options = MinecraftClient.getInstance().options;
-    pendingRenderDistance = options.getViewDistance().getValue();
-    pendingSimulationDistance = options.getSimulationDistance().getValue();
-    pendingMaxFps = options.getMaxFps().getValue();
-    pendingGuiScale = options.getGuiScale().getValue();
-    pendingBrightness = options.getGamma().getValue();
-    pendingFov = options.getFov().getValue();
-    pendingDistortion = options.getDistortionEffectScale().getValue();
-    pendingFovEffects = options.getFovEffectScale().getValue();
-    pendingZone1Radius = config.zone1Radius;
-    pendingZone2Radius = config.zone2Radius;
-    pendingLodTransition = config.lodTransitionDistance;
-    pendingBiomeDetail = config.biomeTransitionDetail;
+    GameOptions o = MinecraftClient.getInstance().options;
+    pendingRenderDist = o.getViewDistance().getValue();
+    pendingSimDist = o.getSimulationDistance().getValue();
+    pendingMaxFps = o.getMaxFps().getValue();
+    pendingGuiScale = o.getGuiScale().getValue();
+    pendingBrightness = o.getGamma().getValue();
+    pendingFov = o.getFov().getValue();
+    pendingDistortion = o.getDistortionEffectScale().getValue();
+    pendingFovEffects = o.getFovEffectScale().getValue();
     pendingTargetFps = config.targetFrameRate;
-    pendingMaxMemoryMb = config.maxMemoryMB;
-    pendingLod1Distance = MetalRenderConfig.lod1Distance();
-    pendingLod2Distance = MetalRenderConfig.lod2Distance();
-    pendingLod3Distance = MetalRenderConfig.lod3Distance();
-    pendingLod4Distance = MetalRenderConfig.lod4Distance();
+    pendingMaxMemMb = config.maxMemoryMB;
+    pendingLod1 = MetalRenderConfig.lod1Distance();
+    pendingLod2 = MetalRenderConfig.lod2Distance();
+    pendingLod3 = MetalRenderConfig.lod3Distance();
+    pendingLod4 = MetalRenderConfig.lod4Distance();
     pendingLodEnabled = MetalRenderConfig.lodEnabled();
-    rebuildRows();
+    pendingDeepDebugNextRun = MetalRenderConfig.isOneRunDeepDebugRequested();
+
+
+    initialRenderDist = pendingRenderDist;
+    initialLod1 = pendingLod1;
+    initialLod2 = pendingLod2;
+    initialLod3 = pendingLod3;
+    initialLod4 = pendingLod4;
+    initialLodEnabled = pendingLodEnabled;
+    initialBiomeDetail = config.biomeTransitionDetail;
+    initialLeafCulling = config.leafCullingMode;
+    initialSmoothLighting = config.enableSimpleLighting;
+    layout();
+    rebuild();
   }
+
+  private void layout() {
+    pw = Math.min(PANEL_W, width - 16);
+    ph = Math.min(PANEL_H, height - 16);
+    px = (width - pw) / 2;
+    py = (height - ph) / 2;
+    cx = px + HPAD;
+    cy = py + HDR_H + TAB_H;
+    cw = pw - HPAD * 2;
+    ch = ph - HDR_H - TAB_H - FOOT_H;
+  }
+
+
+
+
+
   @Override
-  public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
-    renderInGameBackground(ctx);
-    ctx.fillGradient(0, 0, width, height, 0x88000000, 0xFF000000);
-    ctx.fillGradient(0, 0, width, height, 0x88000000, 0xFF000000);
-    ctx.fillGradient(0, 0, width, height, 0x88000000, 0xFF000000);
-    ctx.drawCenteredTextWithShadow(textRenderer,
-                                   Text.literal("MetalRender Settings"),
-                                   width / 2, 8, TEXT_BRIGHT);
-    int tabX = PAD;
-    int tabY = HEADER_HEIGHT;
-    int tabPanelH = height - HEADER_HEIGHT - FOOTER_HEIGHT;
-    ctx.fill(tabX - 1, tabY - 1, tabX + TAB_WIDTH + 1, tabY + tabPanelH + 1,
-             PANEL_BORDER);
-    ctx.fill(tabX, tabY, tabX + TAB_WIDTH, tabY + tabPanelH, PANEL_BG);
-    for (int i = 0; i < pages.length; i++) {
-      int ty = tabY + i * TAB_HEIGHT;
-      boolean selected = (i == selectedPage);
-      boolean hovered = mouseX >= tabX && mouseX <= tabX + TAB_WIDTH &&
-                        mouseY >= ty && mouseY < ty + TAB_HEIGHT;
-      int bg = selected ? TAB_SELECTED : (hovered ? TAB_HOVER : TAB_NORMAL);
-      drawSlightRoundedRect(ctx, tabX, ty, tabX + TAB_WIDTH,
-                            ty + TAB_HEIGHT - 1, bg);
-      if (selected) {
-        ctx.fill(tabX, ty, tabX + 3, ty + TAB_HEIGHT - 1, ACCENT);
-      }
-      ctx.drawTextWithShadow(textRenderer, Text.literal(pages[i]), tabX + 10,
-                             ty + (TAB_HEIGHT - 9) / 2,
-                             selected ? TEXT_BRIGHT : TEXT_DIM);
-    }
-    int optX = tabX + TAB_WIDTH + PAD;
-    int optY = tabY;
-    int optW = width - optX - PAD;
-    int optH = tabPanelH;
-    updateSliderPositions(optX, optY, optW, optH);
-    ctx.fill(optX - 1, optY - 1, optX + optW + 1, optY + optH + 1,
-             PANEL_BORDER);
-    ctx.fill(optX, optY, optX + optW, optY + optH, PANEL_BG);
-    int contentH = currentRows.size() * ROW_HEIGHT;
-    maxScroll = Math.max(0, contentH - optH);
-    scrollOffset = Math.max(0, Math.min(scrollOffset, maxScroll));
-    ctx.enableScissor(optX, optY, optX + optW, optY + optH);
-    for (int i = 0; i < currentRows.size(); i++) {
-      int ry = optY + i * ROW_HEIGHT - scrollOffset;
-      if (ry + ROW_HEIGHT < optY || ry > optY + optH)
-        continue;
-      SettingRow row = currentRows.get(i);
-      boolean rowHover = mouseX >= optX && mouseX <= optX + optW &&
-                         mouseY >= Math.max(ry, optY) &&
-                         mouseY < Math.min(ry + ROW_HEIGHT, optY + optH);
-      if (row.type == RowType.HEADER) {
-        ctx.drawTextWithShadow(textRenderer, Text.literal(row.label), optX + 8,
-                               ry + (ROW_HEIGHT - 9) / 2, HEADER_COLOR);
-        ctx.fill(optX + 8, ry + ROW_HEIGHT - 4, optX + optW - 8,
-                 ry + ROW_HEIGHT - 3, PANEL_BORDER);
-      } else if (row.type == RowType.INFO) {
-        String infoText = row.value == null || row.value.isEmpty()
-                              ? row.label
-                              : row.label + ": " + row.value;
-        ctx.drawText(textRenderer, Text.literal(infoText), optX + 12,
-                     ry + (ROW_HEIGHT - 9) / 2, TEXT_DIM, false);
-      } else {
-        int rowBg =
-            rowHover ? ROW_HOVER : (i % 2 == 0 ? ROW_BG_EVEN : ROW_BG_ODD);
-        ctx.fill(optX + 4, ry + 1, optX + optW - 4, ry + ROW_HEIGHT - 1, rowBg);
-        ctx.drawText(textRenderer, Text.literal(row.label), optX + 12,
-                     ry + (ROW_HEIGHT - 9) / 2, TEXT_BRIGHT, false);
-        String valStr = row.value;
-        int valColor = ACCENT;
-        if ("Enabled".equals(valStr) || "ON".equals(valStr) ||
-            "Yes".equals(valStr) || "Supported".equals(valStr) ||
-            "Detected".equals(valStr)) {
-          valColor = TEXT_ON;
-        } else if ("Disabled".equals(valStr) || "OFF".equals(valStr) ||
-                   "No".equals(valStr) || "Not Available".equals(valStr) ||
-                   "Not Installed".equals(valStr)) {
-          valColor = TEXT_OFF;
-        }
-        int valW = textRenderer.getWidth(valStr);
-        ctx.drawText(textRenderer, Text.literal(valStr),
-                     optX + optW - valW - 12, ry + (ROW_HEIGHT - 9) / 2,
-                     valColor, false);
-      }
-    }
+  public void render(DrawContext ctx, int mx, int my, float delta) {
+
+    ctx.fill(0, 0, width, height, 0xAA000000);
+
+    ctx.fill(px + 4, py + 4, px + pw + 4, py + ph + 4, 0x44000000);
+
+    fr(ctx, px, py, pw, ph, C_PANEL);
+
+    fr(ctx, px, py, pw, HDR_H, C_HEADER);
+    ctx.drawTextWithShadow(textRenderer,
+        Text.literal("MetalRender Settings"),
+        px + 12, py + (HDR_H - 9) / 2, C_TEXT_PRI);
+    int vx = px + 12 + textRenderer.getWidth("MetalRender Settings") + 6;
+    ctx.drawText(textRenderer, Text.literal("v0.1.7"),
+        vx, py + (HDR_H - 9) / 2, C_TEXT_SEC, false);
+
+    renderTabs(ctx, mx, my);
+
+    ctx.enableScissor(cx, cy, cx + cw, cy + ch);
+    posSliders();
+    renderRows(ctx, mx, my);
     ctx.disableScissor();
-    if (maxScroll > 0) {
-      int sbX = optX + optW - 6;
-      int sbH = optH;
-      float thumbRatio = (float)optH / (contentH);
-      int thumbH = Math.max(20, (int)(sbH * thumbRatio));
-      int thumbY =
-          optY + (int)((float)scrollOffset / maxScroll * (sbH - thumbH));
-      ctx.fill(sbX, optY, sbX + 4, optY + sbH, SCROLLBAR_BG);
-      ctx.fill(sbX, thumbY, sbX + 4, thumbY + thumbH, SCROLLBAR_FG);
-    }
-    String version = "v0.1.7";
-    String gpuStr = MetalHardwareChecker.getDeviceName();
-    if (gpuStr == null || gpuStr.isEmpty())
-      gpuStr = "Unknown";
-    ctx.drawText(textRenderer, Text.literal(version), tabX + 6,
-                 tabY + tabPanelH - 22, TEXT_DIM, false);
-    int gpuW = textRenderer.getWidth(gpuStr);
-    if (gpuW > TAB_WIDTH - 12)
-      gpuStr = gpuStr.substring(0, Math.min(gpuStr.length(), 14)) + "…";
-    ctx.drawText(textRenderer, Text.literal(gpuStr), tabX + 6,
-                 tabY + tabPanelH - 11, TEXT_DIM, false);
-    super.render(ctx, mouseX, mouseY, delta);
+
+    renderScrollbar(ctx);
+
+    int fy = py + ph - FOOT_H;
+    fr(ctx, px, fy, pw, 1, C_DIVIDER);
+    String gpu = MetalHardwareChecker.getDeviceName();
+    if (gpu == null || gpu.isEmpty())
+      gpu = "Unknown GPU";
+    if (textRenderer.getWidth(gpu) > pw / 2 - 20)
+      gpu = gpu.substring(0, Math.min(gpu.length(), 30)) + "\u2026";
+    ctx.drawText(textRenderer, Text.literal(gpu),
+        px + 12, fy + (FOOT_H - 9) / 2, C_TEXT_SEC, false);
+    super.render(ctx, mx, my, delta);
   }
+
+  private void renderTabs(DrawContext ctx, int mx, int my) {
+    int ty = py + HDR_H;
+    fr(ctx, px, ty, pw, TAB_H, C_TAB_BAR);
+    int tw = pw / TABS.length;
+    for (int i = 0; i < TABS.length; i++) {
+      int tx = px + i * tw;
+      boolean sel = i == selectedTab;
+      boolean hov = mx >= tx && mx < tx + tw && my >= ty && my < ty + TAB_H && !sel;
+      int bg = sel ? C_TAB_ACTIVE : (hov ? C_TAB_HOVER : C_TAB_BAR);
+      fr(ctx, tx + 2, ty + 2, tw - 4, TAB_H - 4, bg);
+      int tc = (sel || hov) ? C_TEXT_PRI : C_TEXT_SEC;
+      ctx.drawCenteredTextWithShadow(textRenderer,
+          Text.literal(TABS[i]), tx + tw / 2, ty + (TAB_H - 9) / 2, tc);
+    }
+    fr(ctx, px, ty + TAB_H - 1, pw, 1, C_DIVIDER);
+  }
+
+  private void renderRows(DrawContext ctx, int mx, int my) {
+    int totalH = totalH();
+    maxScroll = Math.max(0, totalH - ch);
+    scrollOffset = cl(scrollOffset, 0, maxScroll);
+    int y = cy - scrollOffset;
+    for (Row r : rows) {
+      r.renderY = y;
+      if (y + r.h() >= cy && y < cy + ch)
+        drawRow(ctx, r, y, mx, my);
+      y += r.h() + r.gap();
+    }
+  }
+
+  private void drawRow(DrawContext ctx, Row r, int y, int mx, int my) {
+    if (r.type == RT.SECTION) {
+      ctx.drawText(textRenderer, Text.literal(r.label.toUpperCase()),
+          cx + 4, y + (SEC_H - 9) / 2 + 4, C_TEXT_SEC, false);
+      return;
+    }
+    boolean hov = mx >= cx && mx < cx + cw
+        && my >= y && my < y + r.h()
+        && my >= cy && my < cy + ch;
+    fr(ctx, cx, y, cw, CARD_H, hov ? C_CARD_HOVER : C_CARD);
+
+    if (r.type == RT.TOGGLE && "Enabled".equals(r.value))
+      fr(ctx, cx, y, 3, CARD_H, C_TAB_ACTIVE);
+    ctx.drawText(textRenderer, Text.literal(r.label),
+        cx + 10, y + (CARD_H - 9) / 2, C_TEXT_PRI, false);
+    int rx = cx + cw - 8;
+    switch (r.type) {
+      case TOGGLE -> {
+        boolean on = "Enabled".equals(r.value);
+        drawPill(ctx, rx - PILL_W, y + (CARD_H - PILL_H) / 2, on);
+      }
+      case CYCLE -> {
+        int vw = textRenderer.getWidth(r.value) + 12;
+        fr(ctx, rx - vw, y + 8, vw, CARD_H - 16, C_TAB_ACTIVE);
+        ctx.drawCenteredTextWithShadow(textRenderer,
+            Text.literal(r.value), rx - vw / 2, y + (CARD_H - 9) / 2, C_TEXT_PRI);
+      }
+      case INFO -> {
+        String v = r.value == null ? "" : r.value;
+        int col = C_TEXT_SEC;
+        if ("Enabled".equals(v) || "Yes".equals(v) || "Supported".equals(v) || "Installed".equals(v))
+          col = C_VAL_ON;
+        else if ("Disabled".equals(v) || "No".equals(v) || "Not Available".equals(v) || "Not Installed".equals(v))
+          col = C_VAL_OFF;
+        else if (!v.isEmpty())
+          col = C_TEXT_ACCENT;
+        ctx.drawText(textRenderer, Text.literal(v),
+            rx - textRenderer.getWidth(v), y + (CARD_H - 9) / 2, col, false);
+      }
+      case VANILLA -> {
+        String v = r.value == null ? "" : r.value;
+        int col = "ON".equals(v) ? C_VAL_ON : ("OFF".equals(v) ? C_VAL_OFF : C_TEXT_ACCENT);
+        ctx.drawText(textRenderer, Text.literal(v),
+            rx - textRenderer.getWidth(v), y + (CARD_H - 9) / 2, col, false);
+      }
+      case SLIDER -> {
+        if (r.slider != null) {
+          String sv = r.slider.getMessage().getString();
+          ctx.drawText(textRenderer, Text.literal(sv),
+              rx - SLIDER_W - 6 - textRenderer.getWidth(sv),
+              y + (CARD_H - 9) / 2, C_TEXT_ACCENT, false);
+        }
+      }
+      default -> {
+      }
+    }
+    fr(ctx, cx + 8, y + CARD_H - 1, cw - 16, 1, C_DIVIDER);
+  }
+
+
+  private void drawPill(DrawContext ctx, int x, int y, boolean on) {
+    int bg = on ? C_PILL_ON : C_PILL_OFF;
+    ctx.fill(x + 2, y, x + PILL_W - 2, y + PILL_H, bg);
+    ctx.fill(x, y + 2, x + PILL_W, y + PILL_H - 2, bg);
+    int kx = on ? x + PILL_W - PILL_H + 1 : x + 1;
+    ctx.fill(kx + 1, y + 2, kx + PILL_H - 2, y + PILL_H - 2, 0xFFFFFFFF);
+  }
+
+  private void renderScrollbar(DrawContext ctx) {
+    if (maxScroll <= 0)
+      return;
+    int sbX = px + pw - 4;
+    int tot = totalH();
+    int thumbH = Math.max(16, (int) ((float) ch / tot * ch));
+    int thumbY = cy + (int) ((float) scrollOffset / maxScroll * (ch - thumbH));
+    ctx.fill(sbX, cy, sbX + 3, cy + ch, 0xFF3A3A3C);
+    ctx.fill(sbX, thumbY, sbX + 3, thumbY + thumbH, C_SCROLLTHUMB);
+  }
+
+  private void posSliders() {
+    for (Row r : rows) {
+      if (r.type != RT.SLIDER || r.slider == null)
+        continue;
+      int ry = r.renderY;
+      boolean vis = ry >= cy && ry + CARD_H <= cy + ch;
+      r.slider.setPosition(cx + cw - 8 - SLIDER_W, ry + (CARD_H - SLIDER_H) / 2);
+      r.slider.setWidth(SLIDER_W);
+      r.slider.visible = vis;
+      r.slider.active = vis;
+    }
+  }
+
+
+
+
+
   @Override
   public boolean mouseClicked(Click click, boolean bl) {
-    double mouseX = click.x();
-    double mouseY = click.y();
-    int tabX = PAD;
-    int tabY = HEADER_HEIGHT;
-    if (mouseX >= tabX && mouseX <= tabX + TAB_WIDTH) {
-      for (int i = 0; i < pages.length; i++) {
-        int ty = tabY + i * TAB_HEIGHT;
-        if (mouseY >= ty && mouseY < ty + TAB_HEIGHT) {
-          if (selectedPage != i) {
-            selectedPage = i;
+    double mx = click.x(), my = click.y();
+
+    int ty = py + HDR_H;
+    int tw = pw / TABS.length;
+    if (my >= ty && my < ty + TAB_H) {
+      for (int i = 0; i < TABS.length; i++) {
+        int tx = px + i * tw;
+        if (mx >= tx && mx < tx + tw) {
+          if (selectedTab != i) {
+            selectedTab = i;
             scrollOffset = 0;
-            rebuildRows();
+            rebuild();
           }
           return true;
         }
       }
     }
-    int optX = tabX + TAB_WIDTH + PAD;
-    int optY = tabY;
-    int optW = width - optX - PAD;
-    int optH = height - HEADER_HEIGHT - FOOTER_HEIGHT;
-    if (mouseX >= optX && mouseX <= optX + optW && mouseY >= optY &&
-        mouseY <= optY + optH) {
-      int relY = (int)mouseY - optY + scrollOffset;
-      int row = relY / ROW_HEIGHT;
-      if (row >= 0 && row < currentRows.size()) {
-        SettingRow sr = currentRows.get(row);
-        if (sr.type == RowType.TOGGLE) {
-          sr.action.run();
-          rebuildRows();
-          return true;
-        } else if (sr.type == RowType.CYCLE) {
-          sr.action.run();
-          rebuildRows();
-          return true;
-        } else if (sr.type == RowType.VANILLA_OPTION &&
-                   sr.vanillaOption != null) {
-          cycleVanillaOption(sr.vanillaOption);
-          rebuildRows();
-          return true;
+
+    int sbX = px + pw - 6;
+    if (mx >= sbX && mx <= sbX + 6 && my >= cy && my <= cy + ch) {
+      dragging = true;
+      dragOriginY = (int) my;
+      dragOriginOff = scrollOffset;
+      return true;
+    }
+
+    if (mx >= cx && mx < cx + cw && my >= cy && my < cy + ch) {
+      int y = cy - scrollOffset;
+      for (Row r : rows) {
+        double lo = Math.max(y, cy), hi = Math.min(y + r.h(), cy + ch);
+        if (my >= lo && my < hi) {
+          if ((r.type == RT.TOGGLE || r.type == RT.CYCLE) && r.action != null) {
+            r.action.run();
+            rebuild();
+            return true;
+          }
+          if (r.type == RT.VANILLA && r.vanillaOpt != null) {
+            cycleVanilla(r.vanillaOpt);
+            rebuild();
+            return true;
+          }
         }
+        y += r.h() + r.gap();
       }
     }
     return super.mouseClicked(click, bl);
   }
+
   @Override
-  public boolean mouseScrolled(double mouseX, double mouseY, double hAmount,
-                               double vAmount) {
-    scrollOffset -= (int)(vAmount * ROW_HEIGHT * 2);
-    scrollOffset = Math.max(0, Math.min(scrollOffset, maxScroll));
-    return true;
+  public boolean mouseDragged(net.minecraft.client.gui.Click click, double dx, double dy) {
+    if (dragging && maxScroll > 0) {
+      double my = click.y();
+      int tot = totalH();
+      int thumbH = Math.max(16, (int) ((float) ch / tot * ch));
+      float ratio = (float) (my - dragOriginY) / (ch - thumbH);
+      scrollOffset = cl(dragOriginOff + (int) (ratio * maxScroll), 0, maxScroll);
+      return true;
+    }
+    return super.mouseDragged(click, dx, dy);
   }
+
+  @Override
+  public boolean mouseReleased(net.minecraft.client.gui.Click click) {
+    dragging = false;
+    return super.mouseReleased(click);
+  }
+
+  @Override
+  public boolean mouseScrolled(double mx, double my, double hAmt, double vAmt) {
+    if (mx >= px && mx < px + pw && my >= cy && my < cy + ch) {
+      scrollOffset = cl(scrollOffset - (int) (vAmt * CARD_H * 2), 0, maxScroll);
+      return true;
+    }
+    return super.mouseScrolled(mx, my, hAmt, vAmt);
+  }
+
   @Override
   public void close() {
-    applyStagedNumericOptions();
+    applyPending();
     config.save();
-    MetalWorldRenderer wr = MetalWorldRenderer.getInstance();
-    if (wr != null && wr.getChunkMesher() != null) {
-      wr.getChunkMesher().markAllDirty();
+
+
+
+
+    boolean needsRebuild = (pendingRenderDist != initialRenderDist)
+        || (pendingLod1 != initialLod1)
+        || (pendingLod2 != initialLod2)
+        || (pendingLod3 != initialLod3)
+        || (pendingLod4 != initialLod4)
+        || (pendingLodEnabled != initialLodEnabled)
+        || (config.biomeTransitionDetail != initialBiomeDetail)
+        || (config.leafCullingMode != initialLeafCulling)
+        || (config.enableSimpleLighting != initialSmoothLighting);
+
+
+    boolean biomeChanged = config.biomeTransitionDetail != initialBiomeDetail;
+    com.pebbles_boon.metalrender.util.MetalLogger.info(
+        "Settings closed: needsRebuild=%b (renderDist=%b lod=%b biome=%b leaf=%b lighting=%b)",
+        needsRebuild,
+        pendingRenderDist != initialRenderDist,
+        pendingLod1 != initialLod1 || pendingLod2 != initialLod2 || pendingLod3 != initialLod3
+            || pendingLod4 != initialLod4 || pendingLodEnabled != initialLodEnabled,
+        biomeChanged,
+        config.leafCullingMode != initialLeafCulling,
+        config.enableSimpleLighting != initialSmoothLighting);
+    if (needsRebuild || biomeChanged) {
+
+      if (NativeBridge.isLibLoaded()) {
+        NativeBridge.nFlushFrames();
+      }
+
+
+      MetalWorldRenderer wr = MetalWorldRenderer.getInstance();
+      if (wr != null) {
+        wr.onConfigScreenClosed();
+      }
     }
-    if (client != null) {
+    if (client != null)
       client.setScreen(parent);
-    }
   }
-  private void applyStagedNumericOptions() {
-    GameOptions options = MinecraftClient.getInstance().options;
-    options.getViewDistance().setValue(pendingRenderDistance);
-    options.getSimulationDistance().setValue(pendingSimulationDistance);
-    options.getMaxFps().setValue(pendingMaxFps);
-    options.getGuiScale().setValue(pendingGuiScale);
-    options.getGamma().setValue(pendingBrightness);
-    options.getFov().setValue(pendingFov);
-    options.getDistortionEffectScale().setValue(pendingDistortion);
-    options.getFovEffectScale().setValue(pendingFovEffects);
-    config.zone1Radius = pendingZone1Radius;
-    config.zone2Radius = pendingZone2Radius;
-    config.lodTransitionDistance = pendingLodTransition;
-    config.biomeTransitionDetail = pendingBiomeDetail;
+
+  private void applyPending() {
+    GameOptions o = MinecraftClient.getInstance().options;
+    o.getViewDistance().setValue(pendingRenderDist);
+    o.getSimulationDistance().setValue(pendingSimDist);
+    o.getMaxFps().setValue(pendingMaxFps);
+    o.getGuiScale().setValue(pendingGuiScale);
+    o.getGamma().setValue(pendingBrightness);
+    o.getFov().setValue(pendingFov);
+    o.getDistortionEffectScale().setValue(pendingDistortion);
+    o.getFovEffectScale().setValue(pendingFovEffects);
     config.targetFrameRate = pendingTargetFps;
-    config.maxMemoryMB = pendingMaxMemoryMb;
+    config.maxMemoryMB = pendingMaxMemMb;
+    MetalRenderConfig.setOneRunDeepDebugRequested(pendingDeepDebugNextRun);
     MetalRenderConfig.setLodEnabled(pendingLodEnabled);
-    MetalRenderConfig.setLod1Distance(pendingLod1Distance);
-    MetalRenderConfig.setLod2Distance(pendingLod2Distance);
-    MetalRenderConfig.setLod3Distance(pendingLod3Distance);
-    MetalRenderConfig.setLod4Distance(pendingLod4Distance);
+    MetalRenderConfig.setLod1Distance(pendingLod1);
+    MetalRenderConfig.setLod2Distance(pendingLod2);
+    MetalRenderConfig.setLod3Distance(pendingLod3);
+    MetalRenderConfig.setLod4Distance(pendingLod4);
+
+    if (NativeBridge.isLibLoaded()) {
+      NativeBridge.nSetFeatureFlags(
+          config.enableIndirectCommandBuffers,
+          config.enableMeshShaders,
+          config.enableArgumentBuffers,
+          config.enableProgrammableBlending,
+          config.enableMemorylessTargets);
+    }
+
+    MetalWorldRenderer wr = MetalWorldRenderer.getInstance();
+    if (wr != null) {
+      wr.applyFeatureConfig(config);
+    }
   }
-  private void rebuildRows() {
+
+
+
+
+
+  private void rebuild() {
     clearChildren();
-    addFooterButtons();
-    clearSliders();
-    currentRows.clear();
-    maxFpsRow = -1;
-    guiScaleRow = -1;
-    renderDistanceRow = -1;
-    simulationDistanceRow = -1;
-    brightnessRow = -1;
-    fovRow = -1;
-    distortionRow = -1;
-    fovEffectsRow = -1;
-    zone1Row = -1;
-    zone2Row = -1;
-    transitionRow = -1;
-    targetFpsRow = -1;
-    maxMemoryRow = -1;
-    biomeDetailRow = -1;
-    lod1DistanceRow = -1;
-    lod2DistanceRow = -1;
-    lod3DistanceRow = -1;
-    lod4DistanceRow = -1;
-    switch (selectedPage) {
-    case 0 -> buildVideoPage();
-    case 1 -> buildMetalRenderPage();
-    case 2 -> buildQualityPage();
-    case 3 -> buildPerformancePage();
-    case 4 -> buildAdvancedPage();
-    case 5 -> buildLodPage();
+    rows.clear();
+    int bw = 64, bh = 20;
+    addDrawableChild(ButtonWidget.builder(Text.literal("Done"), b -> close())
+        .dimensions(px + pw - bw - 10, py + (HDR_H - bh) / 2, bw, bh).build());
+    switch (selectedTab) {
+      case 0 -> buildVideo();
+      case 1 -> buildMetal();
+      case 2 -> buildQuality();
+      case 3 -> buildPerformance();
+      case 4 -> buildAdvanced();
+      case 5 -> buildLod();
     }
-    addPageSliders();
+    for (Row r : rows)
+      if (r.type == RT.SLIDER && r.slider != null)
+        addDrawableChild(r.slider);
   }
-  private void addFooterButtons() {
-    int btnW = 110;
-    int btnGap = 10;
-    int totalBtnW = btnW * 2 + btnGap;
-    int btnX = width / 2 - totalBtnW / 2;
-    int btnY = height - 30;
-    addDrawableChild(ButtonWidget
-                         .builder(Text.literal("Reset"),
-                                  btn -> {
-                                    config = MetalRenderConfig.load();
-                                    rebuildRows();
-                                  })
-                         .dimensions(btnX, btnY, btnW, 20)
-                         .build());
-    addDrawableChild(
-        ButtonWidget.builder(Text.literal("Done"), btn -> { close(); })
-            .dimensions(btnX + btnW + btnGap, btnY, btnW, 20)
-            .build());
+
+
+
+  private void buildVideo() {
+    GameOptions o = MinecraftClient.getInstance().options;
+    sec("Display");
+    vanilla("Fullscreen", o.getFullscreen());
+    vanilla("VSync", o.getEnableVsync());
+    sld("Max FPS", 10, 260, 10, pendingMaxFps, v -> pendingMaxFps = (int) (float) v);
+    sld("GUI Scale", 0, 6, 1, pendingGuiScale, v -> pendingGuiScale = (int) (float) v);
+    sec("World");
+    sld("Render Distance", 2, 32, 1, pendingRenderDist, v -> pendingRenderDist = (int) (float) v);
+    sld("Simulation Distance", 5, 32, 1, pendingSimDist, v -> pendingSimDist = (int) (float) v);
+    sec("Environment");
+    sld("Brightness", 0f, 1f, 0.05f, (float) pendingBrightness, v -> pendingBrightness = v);
+    sec("Camera");
+    sld("Field of View", 30f, 110f, 1f, pendingFov, v -> pendingFov = (int) (float) v);
+    sld("Distortion Effects", 0f, 1f, 0.05f, (float) pendingDistortion, v -> pendingDistortion = v);
+    sld("FOV Effects", 0f, 1f, 0.05f, (float) pendingFovEffects, v -> pendingFovEffects = v);
+    vanilla("View Bobbing", o.getBobView());
+    vanilla("Entity Shadows", o.getEntityShadows());
+    vanilla("Graphics", o.getPreset());
   }
-  private void clearSliders() {
-    renderDistanceSlider = null;
-    simulationDistanceSlider = null;
-    maxFpsSlider = null;
-    guiScaleSlider = null;
-    brightnessSlider = null;
-    fovSlider = null;
-    distortionSlider = null;
-    fovEffectsSlider = null;
-    zone1RadiusSlider = null;
-    zone2RadiusSlider = null;
-    lodTransitionSlider = null;
-    targetFpsSlider = null;
-    maxMemorySlider = null;
-    biomeDetailSlider = null;
-    lod1DistanceSlider = null;
-    lod2DistanceSlider = null;
-    lod3DistanceSlider = null;
-    lod4DistanceSlider = null;
-  }
-  private void addPageSliders() {
-    if (selectedPage == 0) {
-      maxFpsSlider = addDrawableChild(new MetalOptionSlider(
-          0, 0, 100, 12, Text.literal(""), 10, 260, 10, pendingMaxFps,
-          v -> pendingMaxFps = (int)(float)v));
-      guiScaleSlider = addDrawableChild(new MetalOptionSlider(
-          0, 0, 100, 12, Text.literal(""), 0, 6, 1, pendingGuiScale,
-          v -> pendingGuiScale = (int)(float)v));
-      renderDistanceSlider = addDrawableChild(new MetalOptionSlider(
-          0, 0, 100, 12, Text.literal(""), 2, 32, 1, pendingRenderDistance,
-          v -> pendingRenderDistance = (int)(float)v));
-      simulationDistanceSlider = addDrawableChild(new MetalOptionSlider(
-          0, 0, 100, 12, Text.literal(""), 5, 32, 1, pendingSimulationDistance,
-          v -> pendingSimulationDistance = (int)(float)v));
-      brightnessSlider = addDrawableChild(new MetalOptionSlider(
-          0, 0, 100, 12, Text.literal(""), 0.0f, 1.0f, 0.05f,
-          (float)pendingBrightness, v -> pendingBrightness = v));
-      fovSlider = addDrawableChild(
-          new MetalOptionSlider(0, 0, 100, 12, Text.literal(""), 30f, 110f, 1f,
-                                pendingFov, v -> pendingFov = (int)(float)v));
-      distortionSlider = addDrawableChild(new MetalOptionSlider(
-          0, 0, 100, 12, Text.literal(""), 0.0f, 1.0f, 0.05f,
-          (float)pendingDistortion, v -> pendingDistortion = v));
-      fovEffectsSlider = addDrawableChild(new MetalOptionSlider(
-          0, 0, 100, 12, Text.literal(""), 0.0f, 1.0f, 0.05f,
-          (float)pendingFovEffects, v -> pendingFovEffects = v));
+
+  private void buildMetal() {
+    sec("Renderer");
+    tog("Metal Rendering", config.enableMetalRendering, v -> config.enableMetalRendering = v);
+    tog("Smooth Lighting", config.enableSimpleLighting, v -> config.enableSimpleLighting = v);
+    if (MetalRenderConfig.isDeepDebugActive()) {
+      nfo("Deep Debug Status", "Active this run");
+    } else {
+      tog("Deep Debug Next Run", pendingDeepDebugNextRun, v -> pendingDeepDebugNextRun = v);
+      nfo("Deep Debug Status", pendingDeepDebugNextRun ? "Armed for next launch" : "Off");
     }
-    if (selectedPage == 2) {
-      zone1RadiusSlider = addDrawableChild(new MetalOptionSlider(
-          0, 0, 100, 12, Text.literal(""), 8, 64, 8, pendingZone1Radius,
-          v -> pendingZone1Radius = (int)(float)v));
-      zone2RadiusSlider = addDrawableChild(new MetalOptionSlider(
-          0, 0, 100, 12, Text.literal(""), 32, 256, 32, pendingZone2Radius,
-          v -> pendingZone2Radius = (int)(float)v));
-      lodTransitionSlider = addDrawableChild(new MetalOptionSlider(
-          0, 0, 100, 12, Text.literal(""), 0.5f, 1.0f, 0.05f,
-          pendingLodTransition, v -> pendingLodTransition = v));
-      biomeDetailSlider = addDrawableChild(new MetalOptionSlider(
-          0, 0, 100, 12, Text.literal(""), 0, 4, 1, pendingBiomeDetail,
-          v -> pendingBiomeDetail = (int)(float)v));
-    }
-    if (selectedPage == 5) {
-      lod1DistanceSlider = addDrawableChild(new MetalOptionSlider(
-          0, 0, 100, 12, Text.literal(""), 1, 32, 1, pendingLod1Distance,
-          v -> pendingLod1Distance = (int)(float)v));
-      lod2DistanceSlider = addDrawableChild(new MetalOptionSlider(
-          0, 0, 100, 12, Text.literal(""), 2, 32, 1, pendingLod2Distance,
-          v -> pendingLod2Distance = (int)(float)v));
-      lod3DistanceSlider = addDrawableChild(new MetalOptionSlider(
-          0, 0, 100, 12, Text.literal(""), 3, 32, 1, pendingLod3Distance,
-          v -> pendingLod3Distance = (int)(float)v));
-      lod4DistanceSlider = addDrawableChild(new MetalOptionSlider(
-          0, 0, 100, 12, Text.literal(""), 4, 32, 1, pendingLod4Distance,
-          v -> pendingLod4Distance = (int)(float)v));
-    }
-    if (selectedPage == 3) {
-      targetFpsSlider = addDrawableChild(new MetalOptionSlider(
-          0, 0, 100, 12, Text.literal(""), 30, 240, 30, pendingTargetFps,
-          v -> pendingTargetFps = (int)(float)v));
-      maxMemorySlider = addDrawableChild(new MetalOptionSlider(
-          0, 0, 100, 12, Text.literal(""), 512, 4096, 512, pendingMaxMemoryMb,
-          v -> pendingMaxMemoryMb = (int)(float)v));
-    }
+    sec("Hardware");
+    nfo("GPU", MetalHardwareChecker.getDeviceName());
+    nfo("Metal", MetalRenderClient.isMetalAvailable() ? "Supported" : "Not Available");
+    nfo("Apple Silicon", MetalHardwareChecker.isAppleSilicon() ? "Yes" : "No");
+    nfo("Sodium", MetalRenderClient.isSodiumLoaded() ? "Installed" : "Not Installed");
+    nfo("Mesh Shaders", MetalHardwareChecker.supportsMeshShaders() ? "Supported" : "Not Available");
   }
-  private void updateSliderPositions(int optX, int optY, int optW, int optH) {
-    positionSlider(maxFpsSlider, maxFpsRow, optX, optY, optW, optH);
-    positionSlider(guiScaleSlider, guiScaleRow, optX, optY, optW, optH);
-    positionSlider(renderDistanceSlider, renderDistanceRow, optX, optY, optW,
-                   optH);
-    positionSlider(simulationDistanceSlider, simulationDistanceRow, optX, optY,
-                   optW, optH);
-    positionSlider(brightnessSlider, brightnessRow, optX, optY, optW, optH);
-    positionSlider(fovSlider, fovRow, optX, optY, optW, optH);
-    positionSlider(distortionSlider, distortionRow, optX, optY, optW, optH);
-    positionSlider(fovEffectsSlider, fovEffectsRow, optX, optY, optW, optH);
-    positionSlider(zone1RadiusSlider, zone1Row, optX, optY, optW, optH);
-    positionSlider(zone2RadiusSlider, zone2Row, optX, optY, optW, optH);
-    positionSlider(lodTransitionSlider, transitionRow, optX, optY, optW, optH);
-    positionSlider(targetFpsSlider, targetFpsRow, optX, optY, optW, optH);
-    positionSlider(maxMemorySlider, maxMemoryRow, optX, optY, optW, optH);
-    positionSlider(biomeDetailSlider, biomeDetailRow, optX, optY, optW, optH);
-    positionSlider(lod1DistanceSlider, lod1DistanceRow, optX, optY, optW, optH);
-    positionSlider(lod2DistanceSlider, lod2DistanceRow, optX, optY, optW, optH);
-    positionSlider(lod3DistanceSlider, lod3DistanceRow, optX, optY, optW, optH);
-    positionSlider(lod4DistanceSlider, lod4DistanceRow, optX, optY, optW, optH);
+
+  private void buildQuality() {
+    sec("Rendering Style");
+    cyc("Leaves Mode", config.leafCullingMode == 0 ? "Fast" : "Fancy",
+        () -> config.leafCullingMode = config.leafCullingMode == 0 ? 1 : 0);
+    tog("Zone 2 LOD", config.enableZone2Lod, v -> config.enableZone2Lod = v);
+    sec("Biome Blending");
+
+
+
+    sld("Biome Blend", 0, 10, 1, config.biomeTransitionDetail,
+        v -> config.biomeTransitionDetail = (int) (float) v);
   }
-  private void positionSlider(MetalOptionSlider slider, int rowIndex, int optX,
-                              int optY, int optW, int optH) {
-    if (slider == null || rowIndex < 0) {
-      return;
-    }
-    int rowY = optY + rowIndex * ROW_HEIGHT - scrollOffset;
-    slider.setPosition(optX + optW - 140, rowY + 7);
-    slider.setWidth(124);
-    boolean visible = rowY >= optY && rowY + ROW_HEIGHT <= optY + optH;
-    slider.visible = visible;
-    slider.active = visible;
-  }
-  private void buildVideoPage() {
-    if (client == null)
-      return;
-    GameOptions opts = client.options;
-    currentRows.add(SettingRow.header("Display"));
-    addVanillaOption("Fullscreen", opts.getFullscreen());
-    addVanillaOption("VSync", opts.getEnableVsync());
-    maxFpsRow = currentRows.size();
-    currentRows.add(SettingRow.info("Max FPS", ""));
-    guiScaleRow = currentRows.size();
-    currentRows.add(SettingRow.info("GUI Scale", ""));
-    currentRows.add(SettingRow.header("Quality"));
-    addVanillaOption("Graphics", opts.getPreset());
-    renderDistanceRow = currentRows.size();
-    currentRows.add(SettingRow.info("Render Distance", ""));
-    simulationDistanceRow = currentRows.size();
-    currentRows.add(SettingRow.info("Simulation Distance", ""));
-    brightnessRow = currentRows.size();
-    currentRows.add(SettingRow.info("Brightness", ""));
-    addVanillaOption("Smooth Lighting", opts.getAo());
-    addVanillaOption("Chunk Builder", opts.getChunkBuilderMode());
-    currentRows.add(SettingRow.header("Interface"));
-    addVanillaOption("View Bobbing", opts.getBobView());
-    addVanillaOption("Entity Shadows", opts.getEntityShadows());
-    fovRow = currentRows.size();
-    currentRows.add(SettingRow.info("FOV", ""));
-    distortionRow = currentRows.size();
-    currentRows.add(SettingRow.info("Distortion Effects", ""));
-    fovEffectsRow = currentRows.size();
-    currentRows.add(SettingRow.info("FOV Effects", ""));
-  }
-  private void buildMetalRenderPage() {
-    currentRows.add(SettingRow.header("Metal Rendering"));
-    currentRows.add(SettingRow.toggle(
-        "Metal Rendering", config.enableMetalRendering ? "Enabled" : "Disabled",
-        () -> config.enableMetalRendering = !config.enableMetalRendering));
-    currentRows.add(SettingRow.toggle(
-        "Simple Lighting", config.enableSimpleLighting ? "Enabled" : "Disabled",
-        () -> config.enableSimpleLighting = !config.enableSimpleLighting));
-    currentRows.add(SettingRow.toggle(
-        "Debug Overlay", config.enableDebugOverlay ? "Enabled" : "Disabled",
-        () -> config.enableDebugOverlay = !config.enableDebugOverlay));
-    currentRows.add(SettingRow.header("Status"));
-    currentRows.add(
-        SettingRow.info("GPU", MetalHardwareChecker.getDeviceName()));
-    currentRows.add(
-        SettingRow.info("Metal Available",
-                        MetalRenderClient.isMetalAvailable() ? "Yes" : "No"));
-    currentRows.add(SettingRow.info("Sodium", MetalRenderClient.isSodiumLoaded()
-                                                  ? "isInstaled"
-                                                  : "isNotInstalled"));
-    currentRows.add(SettingRow.info(
-        "Apple Silicon", MetalHardwareChecker.isAppleSilicon() ? "Yes" : "No"));
-  }
-  private void buildQualityPage() {
-    currentRows.add(SettingRow.header("LOD Settings"));
-    zone1Row = currentRows.size();
-    currentRows.add(SettingRow.info("Zone 1 Radius", ""));
-    zone2Row = currentRows.size();
-    currentRows.add(SettingRow.info("Zone 2 Radius", ""));
-    transitionRow = currentRows.size();
-    currentRows.add(SettingRow.info("LOD Transition", ""));
-    currentRows.add(SettingRow.toggle(
-        "Zone 2 LOD", config.enableZone2Lod ? "Enabled" : "Disabled",
-        () -> config.enableZone2Lod = !config.enableZone2Lod));
-    biomeDetailRow = currentRows.size();
-    currentRows.add(SettingRow.info("Biome Transition Detail", ""));
-    currentRows.add(SettingRow.header("Culling"));
-    currentRows.add(SettingRow.cycle(
-        "Leaves Mode", leafCullingModeName(config.leafCullingMode),
-        ()
-            -> config.leafCullingMode =
-                   cycleValue(config.leafCullingMode, 0, 1, 1)));
-  }
-  private void buildPerformancePage() {
-    currentRows.add(SettingRow.header("Frame Pacing"));
-    targetFpsRow = currentRows.size();
-    currentRows.add(SettingRow.info("Target FPS", ""));
-    currentRows.add(SettingRow.toggle(
-        "Triple Buffering", config.enableTripleBuffering ? "yes" : "no",
-        () -> config.enableTripleBuffering = !config.enableTripleBuffering));
-    currentRows.add(SettingRow.header("Memory"));
-    maxMemoryRow = currentRows.size();
-    currentRows.add(SettingRow.info("Max GPU Memory", ""));
-    currentRows.add(
-        SettingRow.toggle("Memory Pressure Fallback",
-                          config.enableMemoryPressureFallback ? "yes" : "no",
-                          ()
-                              -> config.enableMemoryPressureFallback =
-                                     !config.enableMemoryPressureFallback));
-    currentRows.add(SettingRow.header("Runtime Info"));
+
+  private void buildPerformance() {
+    sec("Frame Pacing");
+    sld("Target FPS", 30, 240, 30, pendingTargetFps, v -> pendingTargetFps = (int) (float) v);
+    tog("Triple Buffering", config.enableTripleBuffering, v -> config.enableTripleBuffering = v);
+    sec("Memory");
+    sld("Max GPU Memory (MB)", 512, 4096, 512, pendingMaxMemMb, v -> pendingMaxMemMb = (int) (float) v);
+    tog("Memory Fallback", config.enableMemoryPressureFallback, v -> config.enableMemoryPressureFallback = v);
+    sec("Runtime");
     Runtime rt = Runtime.getRuntime();
-    long usedMB = (rt.totalMemory() - rt.freeMemory()) / (1024 * 1024);
-    long maxMB = rt.maxMemory() / (1024 * 1024);
-    currentRows.add(
-        SettingRow.info("Heap Usage", usedMB + " / " + maxMB + " MB"));
+    long used = (rt.totalMemory() - rt.freeMemory()) / (1024 * 1024);
+    long max = rt.maxMemory() / (1024 * 1024);
+    nfo("Heap Usage", used + " / " + max + " MB");
   }
-  private void buildAdvancedPage() {
-    currentRows.add(SettingRow.header("Metal Features"));
-    currentRows.add(SettingRow.toggle(
-        "Mesh Shaders", config.enableMeshShaders ? "yes" : "no",
-        () -> config.enableMeshShaders = !config.enableMeshShaders));
-    currentRows.add(SettingRow.toggle(
-        "Argument Buffers", config.enableArgumentBuffers ? "yes" : "no",
-        () -> config.enableArgumentBuffers = !config.enableArgumentBuffers));
-    currentRows.add(
-        SettingRow.toggle("Programmable Blending",
-                          config.enableProgrammableBlending ? "yes" : "no",
-                          ()
-                              -> config.enableProgrammableBlending =
-                                     !config.enableProgrammableBlending));
-    currentRows.add(
-        SettingRow.toggle("Indirect CMD Buffers",
-                          config.enableIndirectCommandBuffers ? "yes" : "no",
-                          ()
-                              -> config.enableIndirectCommandBuffers =
-                                     !config.enableIndirectCommandBuffers));
-    currentRows.add(SettingRow.toggle(
-        "Memoryless Targets", config.enableMemorylessTargets ? "yes" : "no",
-        ()
-            -> config.enableMemorylessTargets =
-                   !config.enableMemorylessTargets));
-    currentRows.add(SettingRow.header("Hardware Capabilities"));
-    currentRows.add(SettingRow.info("Mesh Shader HW",
-                                    MetalHardwareChecker.supportsMeshShaders()
-                                        ? "Supported"
-                                        : "Not Available"));
-    currentRows.add(SettingRow.info(
-        "Apple Silicon", MetalHardwareChecker.isAppleSilicon() ? "Yes" : "No"));
-    currentRows.add(
-        SettingRow.info("GPU", MetalHardwareChecker.getDeviceName()));
+
+  private void buildAdvanced() {
+    sec("Metal Features");
+    tog("Argument Buffers", config.enableArgumentBuffers, v -> config.enableArgumentBuffers = v);
+    tog("Indirect CMD Buffers", config.enableIndirectCommandBuffers, v -> config.enableIndirectCommandBuffers = v);
+    tog("Mesh Shaders", config.enableMeshShaders, v -> config.enableMeshShaders = v);
+    tog("Memoryless Targets", config.enableMemorylessTargets, v -> config.enableMemorylessTargets = v);
   }
-  private void buildLodPage() {
-    currentRows.add(SettingRow.header("Level of Detail"));
-    currentRows.add(
-        SettingRow.toggle("LOD System", pendingLodEnabled ? "yes" : "no",
-                          () -> { pendingLodEnabled = !pendingLodEnabled; }));
-    currentRows.add(
-        SettingRow.info("LOD 0", "Full detail (always near player)"));
-    currentRows.add(SettingRow.header("LOD Distances (chunks)"));
-    lod1DistanceRow = currentRows.size();
-    currentRows.add(SettingRow.info("LOD 1 Distance",
-                                    pendingLod1Distance +
-                                        " chunks — skip non-full blocks"));
-    lod2DistanceRow = currentRows.size();
-    currentRows.add(
-        SettingRow.info("LOD 2 Distance",
-                        pendingLod2Distance + " chunks — skip decorations"));
-    lod3DistanceRow = currentRows.size();
-    currentRows.add(
-        SettingRow.info("LOD 3 Distance",
-                        pendingLod3Distance + " chunks — skip small blocks"));
-    lod4DistanceRow = currentRows.size();
-    currentRows.add(SettingRow.info(
-        "LOD 4 Distance", pendingLod4Distance + " chunks — full cubes only"));
-    currentRows.add(SettingRow.header("LOD Level Descriptions"));
-    currentRows.add(SettingRow.info("LOD 0", "All blocks rendered"));
-    currentRows.add(
-        SettingRow.info("LOD 1", "Remove grass, flowers, non-full blocks"));
-    currentRows.add(
-        SettingRow.info("LOD 2", "Also remove fences, walls, pressure plates"));
-    currentRows.add(
-        SettingRow.info("LOD 3", "Also remove slabs, stairs, trapdoors"));
-    currentRows.add(SettingRow.info("LOD 4", "Only render full cube blocks"));
+
+  private void buildLod() {
+    sec("Level of Detail");
+    tog("LOD System", pendingLodEnabled, v -> {
+      pendingLodEnabled = v;
+      MetalRenderConfig.setLodEnabled(pendingLodEnabled);
+    });
+    nfo("LOD 0", "Full detail near player");
+    sec("Distances (chunks)");
+
+
+
+
+    sld("LOD 1", 1, 32, 1, pendingLod1, v -> {
+      pendingLod1 = (int) (float) v;
+      MetalRenderConfig.setLod1Distance(pendingLod1);
+    });
+    sld("LOD 2", 2, 32, 1, pendingLod2, v -> {
+      pendingLod2 = (int) (float) v;
+      MetalRenderConfig.setLod2Distance(pendingLod2);
+    });
+    sld("LOD 3", 3, 32, 1, pendingLod3, v -> {
+      pendingLod3 = (int) (float) v;
+      MetalRenderConfig.setLod3Distance(pendingLod3);
+    });
+    sld("LOD 4", 4, 32, 1, pendingLod4, v -> {
+      pendingLod4 = (int) (float) v;
+      MetalRenderConfig.setLod4Distance(pendingLod4);
+    });
+    sec("Descriptions");
+    nfo("LOD 1", "Skip non-full blocks");
+    nfo("LOD 2", "Skip decorations and fences");
+    nfo("LOD 3", "Skip slabs, stairs, trapdoors");
+    nfo("LOD 4", "Full cubes only");
   }
-  private void addVanillaOption(String name, SimpleOption<?> option) {
-    currentRows.add(
-        SettingRow.vanilla(name, formatVanillaValue(option), option));
+
+
+
+  private void sec(String label) {
+    rows.add(new Row(RT.SECTION, label));
   }
-  private String formatVanillaValue(SimpleOption<?> option) {
-    Object val = option.getValue();
-    if (val instanceof Boolean b)
+
+  private void tog(String label, boolean on, java.util.function.Consumer<Boolean> setter) {
+    boolean[] s = { on };
+    Row r = new Row(RT.TOGGLE, label);
+    r.value = s[0] ? "Enabled" : "Disabled";
+    r.action = () -> {
+      s[0] = !s[0];
+      r.value = s[0] ? "Enabled" : "Disabled";
+      setter.accept(s[0]);
+    };
+    rows.add(r);
+  }
+
+  private void cyc(String label, String initial, Runnable action) {
+    Row r = new Row(RT.CYCLE, label);
+    r.value = initial;
+    r.action = action;
+    rows.add(r);
+  }
+
+  private void nfo(String label, String value) {
+    Row r = new Row(RT.INFO, label);
+    r.value = value;
+    rows.add(r);
+  }
+
+  private void vanilla(String label, SimpleOption<?> opt) {
+    Row r = new Row(RT.VANILLA, label);
+    r.value = fmtV(opt);
+    r.vanillaOpt = opt;
+    rows.add(r);
+  }
+
+  private void sld(String label, float min, float max, float step,
+      float cur, java.util.function.Consumer<Float> cb) {
+    Row r = new Row(RT.SLIDER, label);
+    r.slider = new MetalOptionSlider(0, 0, SLIDER_W, SLIDER_H,
+        Text.literal(""), min, max, step, cur, cb);
+    rows.add(r);
+  }
+
+
+
+  private int totalH() {
+    int h = 0;
+    for (Row r : rows)
+      h += r.h() + r.gap();
+    return h;
+  }
+
+  private String fmtV(SimpleOption<?> opt) {
+    Object v = opt.getValue();
+    if (v instanceof Boolean b)
       return b ? "ON" : "OFF";
-    if (val instanceof Integer i)
+    if (v instanceof Integer i)
       return String.valueOf(i);
-    if (val instanceof Double d) {
-      if (d == (int)(double)d)
-        return String.valueOf((int)(double)d);
+    if (v instanceof Double d) {
+      if (d == (int) (double) d)
+        return String.valueOf((int) (double) d);
       return String.format("%.1f", d);
     }
-    return val.toString();
+    return v.toString();
   }
-  @SuppressWarnings({"unchecked", "rawtypes"})
-  private void cycleVanillaOption(SimpleOption option) {
-    Object val = option.getValue();
-    if (val instanceof Boolean b) {
-      option.setValue(!b);
-      return;
-    }
+
+  @SuppressWarnings({ "unchecked", "rawtypes" })
+  private void cycleVanilla(SimpleOption opt) {
+    Object v = opt.getValue();
+    if (v instanceof Boolean b)
+      opt.setValue(!b);
   }
-  private int cycleValue(int current, int min, int max, int step) {
-    int next = current + step;
-    return next > max ? min : next;
+
+
+  private static void fr(DrawContext ctx, int x, int y, int w, int h, int col) {
+    ctx.fill(x, y, x + w, y + h, col);
   }
-  private float cycleFloat(float current, float min, float max, float step) {
-    float next = current + step;
-    return next > max + 0.001f ? min : Math.round(next * 100f) / 100f;
-  }
-  private String leafCullingModeName(int mode) {
-    return switch (mode) {
-      case 0 -> "Fast";
-      case 1 -> "Fancy";
-      default -> "Unknown";
-    };
-  }
-  private void drawSlightRoundedRect(DrawContext ctx, int x1, int y1, int x2,
-                                     int y2, int color) {
-    ctx.fill(x1 + 3, y1, x2 - 3, y2, color);
-    ctx.fill(x1 + 1, y1 + 1, x2 - 1, y2 - 1, color);
-    ctx.fill(x1, y1 + 3, x2, y2 - 3, color);
-  }
-  private enum RowType { HEADER, TOGGLE, CYCLE, INFO, VANILLA_OPTION }
-  private static class SettingRow {
-    final RowType type;
-    final String label;
-    final String value;
-    final Runnable action;
-    final SimpleOption<?> vanillaOption;
-    SettingRow(RowType type, String label, String value, Runnable action,
-               SimpleOption<?> vanillaOption) {
-      this.type = type;
-      this.label = label;
-      this.value = value;
-      this.action = action;
-      this.vanillaOption = vanillaOption;
-    }
-    static SettingRow header(String label) {
-      return new SettingRow(RowType.HEADER, label, "", null, null);
-    }
-    static SettingRow toggle(String label, String value, Runnable action) {
-      return new SettingRow(RowType.TOGGLE, label, value, action, null);
-    }
-    static SettingRow cycle(String label, String value, Runnable action) {
-      return new SettingRow(RowType.CYCLE, label, value, action, null);
-    }
-    static SettingRow info(String label, String value) {
-      return new SettingRow(RowType.INFO, label, value, null, null);
-    }
-    static SettingRow vanilla(String label, String value,
-                              SimpleOption<?> option) {
-      return new SettingRow(RowType.VANILLA_OPTION, label, value, null, option);
-    }
+
+
+  private static int cl(int v, int lo, int hi) {
+    return Math.max(lo, Math.min(hi, v));
   }
 }

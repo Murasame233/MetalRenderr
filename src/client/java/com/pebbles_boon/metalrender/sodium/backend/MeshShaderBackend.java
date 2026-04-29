@@ -29,9 +29,9 @@ public class MeshShaderBackend {
     if (meshShadersAvailable && library != 0) {
       long[] handles = MeshShaderNative.createTerrainMeshPipelines(library);
       if (handles != null && handles.length >= 3) {
-        terrainPipelineHandles[0] = handles[0]; 
-        terrainPipelineHandles[1] = handles[1]; 
-        terrainPipelineHandles[2] = handles[2]; 
+        terrainPipelineHandles[0] = handles[0];
+        terrainPipelineHandles[1] = handles[1];
+        terrainPipelineHandles[2] = handles[2];
         if (handles[0] != 0) {
           MetalLogger.info("Mesh shader terrain pipelines created: opaque=0x%X, cutout=0x%X, emissive=0x%X",
               handles[0], handles[1], handles[2]);
@@ -60,7 +60,7 @@ public class MeshShaderBackend {
     if (!active || !gpuDrivenEnabled || count <= 0)
       return;
     if (count > meshletUploadCapacity) {
-      meshletUploadCapacity = count + (count >> 2); 
+      meshletUploadCapacity = count + (count >> 2);
       meshletUploadBuffer = ByteBuffer.allocateDirect(meshletUploadCapacity * 32)
           .order(ByteOrder.nativeOrder());
     }
@@ -72,8 +72,8 @@ public class MeshShaderBackend {
       meshletUploadBuffer.putInt(meshletTriangleCounts[i]);
       meshletUploadBuffer.putInt(meshletLodLevels[i]);
       meshletUploadBuffer.putInt(meshletChunkIndices[i]);
-      meshletUploadBuffer.putInt(0); 
-      meshletUploadBuffer.putInt(0); 
+      meshletUploadBuffer.putInt(0);
+      meshletUploadBuffer.putInt(0);
     }
     meshletUploadBuffer.flip();
     MeshShaderNative.uploadMeshletBuffer(0, meshletUploadBuffer, count);
@@ -83,7 +83,7 @@ public class MeshShaderBackend {
       int objectThreadgroups, int meshThreadsPerGroup) {
     if (!active || frameContext == 0)
       return;
-    long pipeline = getPipeline(0); 
+    long pipeline = getPipeline(0);
     if (pipeline != 0) {
       MeshShaderNative.drawMeshThreadgroups(
           frameContext, pipeline, objectThreadgroups,

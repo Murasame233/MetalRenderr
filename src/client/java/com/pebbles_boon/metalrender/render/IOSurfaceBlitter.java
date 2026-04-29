@@ -1,4 +1,5 @@
 package com.pebbles_boon.metalrender.render;
+
 import com.pebbles_boon.metalrender.nativebridge.NativeBridge;
 import com.pebbles_boon.metalrender.util.MetalLogger;
 import java.nio.ByteBuffer;
@@ -13,9 +14,11 @@ import org.lwjgl.opengl.GL15;
 import org.lwjgl.opengl.GL20;
 import org.lwjgl.opengl.GL30;
 import org.lwjgl.opengl.GL42;
+
 public final class IOSurfaceBlitter {
   private static final int GL_TEXTURE_RECTANGLE = 0x84F5;
   private static final int GL_BGRA = 0x80E1;
+  private final int[] blitViewportBuf = new int[4];
   private int glTextureRect = 0;
   private int ioSurfaceFbo = 0;
   private int intermediateFbo = 0;
@@ -23,11 +26,15 @@ public final class IOSurfaceBlitter {
   private int vao = 0;
   private int vbo = 0;
   private int shaderProgram = 0;
+  private int rectShaderProgram = 0;
+  private int rectTexSizeLoc = -1;
   private int glTexture = 0;
   private ByteBuffer pixelBuffer = null;
   private int boundWidth = 0;
   private int boundHeight = 0;
   private boolean initialized = false;
+
+  private volatile boolean destroyed = false;
   private int blitFrameCount = 0;
   private boolean ioSurfaceFailed = false;
   private int consecutiveFastPathFailures = 0;
@@ -43,7 +50,38 @@ public final class IOSurfaceBlitter {
   private int depthTextureWidth = 0;
   private int depthTextureHeight = 0;
   private ByteBuffer depthPixelBuffer = null;
+  private byte[] depthRowA = null;
+  private byte[] depthRowB = null;
   private final float[] prevClearColor = new float[4];
+
+
+
+  private int cachedPrevReadFbo = -1;
+  private int cachedPrevDrawFbo = -1;
+  private boolean cachedScissor = false;
+  private boolean glStateQueried = false;
+
+  private int cachedQuadPrevProgram = -1;
+  private int cachedQuadPrevVao = -1;
+  private int cachedQuadPrevActiveTexture = -1;
+  private int cachedQuadPrevTex = -1;
+  private boolean cachedQuadWasDepth = false;
+  private boolean cachedQuadWasBlend = false;
+  private boolean cachedQuadWasCull = false;
+  private boolean cachedQuadWasScissor = false;
+  private boolean cachedQuadWasStencil = false;
+  private boolean cachedQuadWasDepthMask = false;
+  private boolean cachedQuadCmR = true, cachedQuadCmG = true, cachedQuadCmB = true, cachedQuadCmA = true;
+  private int cachedQuadBSrcRGB = -1, cachedQuadBDstRGB = -1, cachedQuadBSrcA = -1, cachedQuadBDstA = -1;
+  private final int[] cachedQuadViewport = new int[4];
+  private boolean quadStateQueried = false;
+
+  private final ByteBuffer reusableCmBuf = BufferUtils.createByteBuffer(4);
+  private long blitWaitAccNs = 0;
+  private long blitBindAccNs = 0;
+  private long blitInterAccNs = 0;
+  private long blitQuadAccNs = 0;
+  private int blitStageCount = 0;
   private static final String VERTEX_SHADER = """
       #version 150 core
       in vec2 aPos;
@@ -65,6 +103,19 @@ public final class IOSurfaceBlitter {
           fragColor = texColor;
       }
       """;
+  private static final String RECT_FRAGMENT_SHADER = """
+      #version 150 core
+      in vec2 vTexCoord;
+      out vec4 fragColor;
+      uniform sampler2DRect uTextureRect;
+      uniform vec2 uTexSize;
+      void main() {
+          vec2 rc = vec2(vTexCoord.x * uTexSize.x, (1.0 - vTexCoord.y) * uTexSize.y);
+          vec4 texColor = texture(uTextureRect, rc);
+          if (texColor.a < 0.001) discard;
+          fragColor = texColor;
+      }
+      """;
   private static final String DEPTH_FRAGMENT_SHADER = """
       #version 150 core
       in vec2 vTexCoord;
@@ -81,12 +132,17 @@ public final class IOSurfaceBlitter {
       1.0f, 1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 0.0f, 0.0f,
       1.0f, 1.0f, 1.0f, 1.0f, -1.0f, 1.0f, 0.0f, 1.0f,
   };
+
   public IOSurfaceBlitter() {
   }
+
   public boolean blit(long metalHandle) {
     return blit(metalHandle, false);
   }
+
   public boolean blit(long metalHandle, boolean skipWait) {
+    if (destroyed)
+      return false;
     blitFrameCount++;
     if (metalHandle == 0) {
       return false;
@@ -112,8 +168,15 @@ public final class IOSurfaceBlitter {
     lastIOSurfaceHeight = height;
     return blitGPUComposite(metalHandle, width, height, skipWait);
   }
+
   public void destroy() {
+    destroyed = true;
     deleteShaderProgram();
+    if (rectShaderProgram != 0) {
+      GL20.glDeleteProgram(rectShaderProgram);
+      rectShaderProgram = 0;
+      rectTexSizeLoc = -1;
+    }
     deleteQuadGeometry();
     deleteTextures();
     if (ioSurfaceFbo != 0) {
@@ -135,6 +198,7 @@ public final class IOSurfaceBlitter {
     resetFastPathState();
     MetalLogger.info("[IOSurfaceBlitter] Destroyed");
   }
+
   private boolean initialize() {
     if (initialized)
       return true;
@@ -163,21 +227,47 @@ public final class IOSurfaceBlitter {
       return false;
     }
   }
+
   private boolean blitGPUComposite(long metalHandle, int width, int height,
       boolean skipWait) {
     try {
+      long t0 = System.nanoTime();
       if (!skipWait) {
         NativeBridge.nWaitForRender(metalHandle);
       }
+      long t1 = System.nanoTime();
       if (!ioSurfaceFailed &&
           consecutiveFastPathFailures < MAX_FAST_PATH_FAILURES) {
         if (glTextureRect == 0) {
           glTextureRect = GL11.glGenTextures();
         }
         boolean bound = NativeBridge.nBindIOSurfaceToTexture(metalHandle, glTextureRect);
+        long t2 = System.nanoTime();
         if (bound && blitToIntermediateTexture(width, height)) {
+          long t3 = System.nanoTime();
           consecutiveFastPathFailures = 0;
-          return drawFullscreenQuad(width, height);
+          boolean ok = drawFullscreenQuad(width, height);
+          long t4 = System.nanoTime();
+          blitWaitAccNs += (t1 - t0);
+          blitBindAccNs += (t2 - t1);
+          blitInterAccNs += (t3 - t2);
+          blitQuadAccNs += (t4 - t3);
+          blitStageCount++;
+          if (blitStageCount >= 120) {
+            double wMs = blitWaitAccNs / (blitStageCount * 1_000_000.0);
+            double bMs = blitBindAccNs / (blitStageCount * 1_000_000.0);
+            double iMs = blitInterAccNs / (blitStageCount * 1_000_000.0);
+            double qMs = blitQuadAccNs / (blitStageCount * 1_000_000.0);
+            MetalLogger.info(
+                "[IOSurfaceBlitter] STAGE_TIMING: wait=%.2fms bind=%.2fms inter=%.2fms quad=%.2fms (avg/%d)",
+                wMs, bMs, iMs, qMs, blitStageCount);
+            blitWaitAccNs = 0;
+            blitBindAccNs = 0;
+            blitInterAccNs = 0;
+            blitQuadAccNs = 0;
+            blitStageCount = 0;
+          }
+          return ok;
         } else {
           consecutiveFastPathFailures++;
           if (blitFrameCount <= 10) {
@@ -204,6 +294,7 @@ public final class IOSurfaceBlitter {
       return false;
     }
   }
+
   private boolean blitToIntermediateTexture(int width, int height) {
     com.pebbles_boon.metalrender.util.VanillaRenderState.setIOSurfaceBlitting(
         true);
@@ -214,11 +305,28 @@ public final class IOSurfaceBlitter {
           false);
     }
   }
+
   private boolean blitToIntermediateImpl(int width, int height) {
-    int prevReadFbo = GL11.glGetInteger(GL30.GL_READ_FRAMEBUFFER_BINDING);
-    int prevDrawFbo = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
-    boolean scissor = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST);
-    GL11.glGetFloatv(GL11.GL_COLOR_CLEAR_VALUE, prevClearColor);
+
+
+
+
+    int prevReadFbo, prevDrawFbo;
+    boolean scissor;
+    if (!glStateQueried) {
+      prevReadFbo = GL11.glGetInteger(GL30.GL_READ_FRAMEBUFFER_BINDING);
+      prevDrawFbo = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
+      scissor = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST);
+      GL11.glGetFloatv(GL11.GL_COLOR_CLEAR_VALUE, prevClearColor);
+      cachedPrevReadFbo = prevReadFbo;
+      cachedPrevDrawFbo = prevDrawFbo;
+      cachedScissor = scissor;
+      glStateQueried = true;
+    } else {
+      prevReadFbo = cachedPrevReadFbo;
+      prevDrawFbo = cachedPrevDrawFbo;
+      scissor = cachedScissor;
+    }
     try {
       if (ioSurfaceFbo == 0) {
         ioSurfaceFbo = GL30.glGenFramebuffers();
@@ -273,6 +381,7 @@ public final class IOSurfaceBlitter {
           prevClearColor[3]);
     }
   }
+
   private void ensureIntermediateTexture(int width, int height) {
     if (intermediateTexture != 0 && boundWidth == width &&
         boundHeight == height) {
@@ -314,6 +423,7 @@ public final class IOSurfaceBlitter {
     MetalLogger.info("[IOSurfaceBlitter] Created intermediate texture: %dx%d",
         width, height);
   }
+
   private boolean blitSlowPath(long metalHandle, int width, int height) {
     int requiredSize = width * height * 4;
     if (pixelBuffer == null || pixelBuffer.capacity() < requiredSize) {
@@ -327,6 +437,7 @@ public final class IOSurfaceBlitter {
     uploadToTexture(width, height);
     return drawFullscreenQuad(width, height);
   }
+
   private void uploadToTexture(int width, int height) {
     if (width != boundWidth || height != boundHeight || glTexture == 0) {
       if (glTexture != 0)
@@ -354,6 +465,97 @@ public final class IOSurfaceBlitter {
     GL11.glTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, 0, width, height, GL_BGRA,
         GL11.GL_UNSIGNED_BYTE, pixelBuffer);
   }
+
+  private boolean drawDirectRect(int width, int height) {
+    if (rectShaderProgram == 0) {
+      rectShaderProgram = createRectShaderProgram();
+      if (rectShaderProgram == 0) {
+        return false;
+      }
+      GL20.glUseProgram(rectShaderProgram);
+      int texLoc = GL20.glGetUniformLocation(rectShaderProgram, "uTextureRect");
+      if (texLoc >= 0)
+        GL20.glUniform1i(texLoc, 0);
+      rectTexSizeLoc = GL20.glGetUniformLocation(rectShaderProgram, "uTexSize");
+      GL20.glUseProgram(0);
+    }
+    int prevProgram = GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM);
+    int prevVao = GL11.glGetInteger(GL30.GL_VERTEX_ARRAY_BINDING);
+    boolean wasDepth = GL11.glIsEnabled(GL11.GL_DEPTH_TEST);
+    boolean wasBlend = GL11.glIsEnabled(GL11.GL_BLEND);
+    boolean wasScissor = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST);
+    boolean wasDepthMask = GL11.glGetBoolean(GL11.GL_DEPTH_WRITEMASK);
+    int[] prevViewport = blitViewportBuf;
+    GL11.glGetIntegerv(GL11.GL_VIEWPORT, prevViewport);
+    try {
+      GL11.glViewport(0, 0, width, height);
+      GL11.glDisable(GL11.GL_DEPTH_TEST);
+      GL11.glDepthMask(false);
+      GL11.glEnable(GL11.GL_BLEND);
+      GL14.glBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA,
+          GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
+      GL11.glDisable(GL11.GL_CULL_FACE);
+      GL11.glDisable(GL11.GL_SCISSOR_TEST);
+      GL11.glDisable(GL11.GL_STENCIL_TEST);
+      GL11.glColorMask(true, true, true, true);
+      GL20.glUseProgram(rectShaderProgram);
+      if (rectTexSizeLoc >= 0) {
+        GL20.glUniform2f(rectTexSizeLoc, (float) width, (float) height);
+      }
+      GL13.glActiveTexture(GL13.GL_TEXTURE0);
+      GL11.glBindTexture(GL_TEXTURE_RECTANGLE, glTextureRect);
+      GL30.glBindVertexArray(vao);
+      GL11.glDrawArrays(GL11.GL_TRIANGLES, 0, 6);
+      GL30.glBindVertexArray(0);
+      GL11.glBindTexture(GL_TEXTURE_RECTANGLE, 0);
+      return true;
+    } finally {
+      GL11.glViewport(prevViewport[0], prevViewport[1], prevViewport[2],
+          prevViewport[3]);
+      GL20.glUseProgram(prevProgram);
+      GL30.glBindVertexArray(prevVao);
+      GL11.glDepthMask(wasDepthMask);
+      if (wasDepth)
+        GL11.glEnable(GL11.GL_DEPTH_TEST);
+      else
+        GL11.glDisable(GL11.GL_DEPTH_TEST);
+      if (wasBlend)
+        GL11.glEnable(GL11.GL_BLEND);
+      else
+        GL11.glDisable(GL11.GL_BLEND);
+      if (wasScissor)
+        GL11.glEnable(GL11.GL_SCISSOR_TEST);
+      else
+        GL11.glDisable(GL11.GL_SCISSOR_TEST);
+    }
+  }
+
+  private int createRectShaderProgram() {
+    int vs = compileShader(GL20.GL_VERTEX_SHADER, VERTEX_SHADER);
+    if (vs == 0)
+      return 0;
+    int fs = compileShader(GL20.GL_FRAGMENT_SHADER, RECT_FRAGMENT_SHADER);
+    if (fs == 0) {
+      GL20.glDeleteShader(vs);
+      return 0;
+    }
+    int prog = GL20.glCreateProgram();
+    GL20.glAttachShader(prog, vs);
+    GL20.glAttachShader(prog, fs);
+    GL20.glBindAttribLocation(prog, 0, "aPos");
+    GL20.glBindAttribLocation(prog, 1, "aTexCoord");
+    GL20.glLinkProgram(prog);
+    GL20.glDeleteShader(vs);
+    GL20.glDeleteShader(fs);
+    if (GL20.glGetProgrami(prog, GL20.GL_LINK_STATUS) == GL11.GL_FALSE) {
+      MetalLogger.error("[IOSurfaceBlitter] Rect shader link failed: %s",
+          GL20.glGetProgramInfoLog(prog));
+      GL20.glDeleteProgram(prog);
+      return 0;
+    }
+    return prog;
+  }
+
   private boolean drawFullscreenQuad(int width, int height) {
     if (shaderProgram == 0) {
       shaderProgram = createShaderProgram();
@@ -367,26 +569,76 @@ public final class IOSurfaceBlitter {
         GL20.glUniform1i(loc, 0);
       GL20.glUseProgram(0);
     }
-    int prevProgram = GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM);
-    int prevVao = GL11.glGetInteger(GL30.GL_VERTEX_ARRAY_BINDING);
-    int prevActiveTexture = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE);
-    int prevTex = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
-    boolean wasDepth = GL11.glIsEnabled(GL11.GL_DEPTH_TEST);
-    boolean wasBlend = GL11.glIsEnabled(GL11.GL_BLEND);
-    boolean wasCull = GL11.glIsEnabled(GL11.GL_CULL_FACE);
-    boolean wasScissor = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST);
-    boolean wasStencil = GL11.glIsEnabled(GL11.GL_STENCIL_TEST);
-    boolean wasDepthMask = GL11.glGetBoolean(GL11.GL_DEPTH_WRITEMASK);
-    ByteBuffer cmBuf = BufferUtils.createByteBuffer(4);
-    GL11.glGetBooleanv(GL11.GL_COLOR_WRITEMASK, cmBuf);
-    boolean cmR = cmBuf.get(0) != 0, cmG = cmBuf.get(1) != 0,
-        cmB = cmBuf.get(2) != 0, cmA = cmBuf.get(3) != 0;
-    int bSrcRGB = GL11.glGetInteger(GL14.GL_BLEND_SRC_RGB);
-    int bDstRGB = GL11.glGetInteger(GL14.GL_BLEND_DST_RGB);
-    int bSrcA = GL11.glGetInteger(GL14.GL_BLEND_SRC_ALPHA);
-    int bDstA = GL11.glGetInteger(GL14.GL_BLEND_DST_ALPHA);
-    int[] prevViewport = new int[4];
-    GL11.glGetIntegerv(GL11.GL_VIEWPORT, prevViewport);
+
+
+
+    int prevProgram, prevVao, prevActiveTexture, prevTex;
+    boolean wasDepth, wasBlend, wasCull, wasScissor, wasStencil, wasDepthMask;
+    boolean cmR, cmG, cmB, cmA;
+    int bSrcRGB, bDstRGB, bSrcA, bDstA;
+    if (!quadStateQueried) {
+      prevProgram = GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM);
+      prevVao = GL11.glGetInteger(GL30.GL_VERTEX_ARRAY_BINDING);
+      prevActiveTexture = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE);
+      prevTex = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
+      wasDepth = GL11.glIsEnabled(GL11.GL_DEPTH_TEST);
+      wasBlend = GL11.glIsEnabled(GL11.GL_BLEND);
+      wasCull = GL11.glIsEnabled(GL11.GL_CULL_FACE);
+      wasScissor = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST);
+      wasStencil = GL11.glIsEnabled(GL11.GL_STENCIL_TEST);
+      wasDepthMask = GL11.glGetBoolean(GL11.GL_DEPTH_WRITEMASK);
+      reusableCmBuf.clear();
+      GL11.glGetBooleanv(GL11.GL_COLOR_WRITEMASK, reusableCmBuf);
+      ByteBuffer cmBuf = reusableCmBuf;
+      cmR = cmBuf.get(0) != 0;
+      cmG = cmBuf.get(1) != 0;
+      cmB = cmBuf.get(2) != 0;
+      cmA = cmBuf.get(3) != 0;
+      bSrcRGB = GL11.glGetInteger(GL14.GL_BLEND_SRC_RGB);
+      bDstRGB = GL11.glGetInteger(GL14.GL_BLEND_DST_RGB);
+      bSrcA = GL11.glGetInteger(GL14.GL_BLEND_SRC_ALPHA);
+      bDstA = GL11.glGetInteger(GL14.GL_BLEND_DST_ALPHA);
+      cachedQuadPrevProgram = prevProgram;
+      cachedQuadPrevVao = prevVao;
+      cachedQuadPrevActiveTexture = prevActiveTexture;
+      cachedQuadPrevTex = prevTex;
+      cachedQuadWasDepth = wasDepth;
+      cachedQuadWasBlend = wasBlend;
+      cachedQuadWasCull = wasCull;
+      cachedQuadWasScissor = wasScissor;
+      cachedQuadWasStencil = wasStencil;
+      cachedQuadWasDepthMask = wasDepthMask;
+      cachedQuadCmR = cmR;
+      cachedQuadCmG = cmG;
+      cachedQuadCmB = cmB;
+      cachedQuadCmA = cmA;
+      cachedQuadBSrcRGB = bSrcRGB;
+      cachedQuadBDstRGB = bDstRGB;
+      cachedQuadBSrcA = bSrcA;
+      cachedQuadBDstA = bDstA;
+      GL11.glGetIntegerv(GL11.GL_VIEWPORT, cachedQuadViewport);
+      quadStateQueried = true;
+    } else {
+      prevProgram = cachedQuadPrevProgram;
+      prevVao = cachedQuadPrevVao;
+      prevActiveTexture = cachedQuadPrevActiveTexture;
+      prevTex = cachedQuadPrevTex;
+      wasDepth = cachedQuadWasDepth;
+      wasBlend = cachedQuadWasBlend;
+      wasCull = cachedQuadWasCull;
+      wasScissor = cachedQuadWasScissor;
+      wasStencil = cachedQuadWasStencil;
+      wasDepthMask = cachedQuadWasDepthMask;
+      cmR = cachedQuadCmR;
+      cmG = cachedQuadCmG;
+      cmB = cachedQuadCmB;
+      cmA = cachedQuadCmA;
+      bSrcRGB = cachedQuadBSrcRGB;
+      bDstRGB = cachedQuadBDstRGB;
+      bSrcA = cachedQuadBSrcA;
+      bDstA = cachedQuadBDstA;
+    }
+    int[] prevViewport = cachedQuadViewport;
     try {
       GL11.glViewport(0, 0, width, height);
       GL11.glDisable(GL11.GL_DEPTH_TEST);
@@ -438,6 +690,7 @@ public final class IOSurfaceBlitter {
       GL14.glBlendFuncSeparate(bSrcRGB, bDstRGB, bSrcA, bDstA);
     }
   }
+
   private int createShaderProgram() {
     int vs = compileShader(GL20.GL_VERTEX_SHADER, VERTEX_SHADER);
     if (vs == 0)
@@ -463,6 +716,7 @@ public final class IOSurfaceBlitter {
     }
     return prog;
   }
+
   private int compileShader(int type, String source) {
     int s = GL20.glCreateShader(type);
     GL20.glShaderSource(s, source);
@@ -476,6 +730,7 @@ public final class IOSurfaceBlitter {
     }
     return s;
   }
+
   public boolean blitDepth(long metalHandle, int width, int height) {
     depthBlitFrameCount++;
     if (metalHandle == 0 || width <= 0 || height <= 0) {
@@ -566,10 +821,11 @@ public final class IOSurfaceBlitter {
     boolean scissor = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST);
     boolean cull = GL11.glIsEnabled(GL11.GL_CULL_FACE);
     int depthFunc = GL11.glGetInteger(GL11.GL_DEPTH_FUNC);
-    int[] prevViewport = new int[4];
+    int[] prevViewport = blitViewportBuf;
     GL11.glGetIntegerv(GL11.GL_VIEWPORT, prevViewport);
-    ByteBuffer cmBuf = BufferUtils.createByteBuffer(4);
-    GL11.glGetBooleanv(GL11.GL_COLOR_WRITEMASK, cmBuf);
+    reusableCmBuf.clear();
+    GL11.glGetBooleanv(GL11.GL_COLOR_WRITEMASK, reusableCmBuf);
+    ByteBuffer cmBuf = reusableCmBuf;
     boolean cmR = cmBuf.get(0) != 0, cmG = cmBuf.get(1) != 0,
         cmB = cmBuf.get(2) != 0, cmA = cmBuf.get(3) != 0;
     try {
@@ -642,6 +898,7 @@ public final class IOSurfaceBlitter {
         GL11.glDisable(GL11.GL_CULL_FACE);
     }
   }
+
   public boolean uploadDepthDirect(long metalHandle, int mcDepthTexId,
       int width, int height) {
     depthBlitFrameCount++;
@@ -684,15 +941,17 @@ public final class IOSurfaceBlitter {
           depthBlitFrameCount, center, topLeft, bottomRight, mn, mx);
     }
     int rowBytes = width * 4;
-    byte[] rowA = new byte[rowBytes];
-    byte[] rowB = new byte[rowBytes];
+    if (depthRowA == null || depthRowA.length < rowBytes) {
+      depthRowA = new byte[rowBytes];
+      depthRowB = new byte[rowBytes];
+    }
     for (int y = 0; y < height / 2; y++) {
       int topOffset = y * rowBytes;
       int botOffset = (height - 1 - y) * rowBytes;
-      depthPixelBuffer.get(topOffset, rowA);
-      depthPixelBuffer.get(botOffset, rowB);
-      depthPixelBuffer.put(topOffset, rowB);
-      depthPixelBuffer.put(botOffset, rowA);
+      depthPixelBuffer.get(topOffset, depthRowA);
+      depthPixelBuffer.get(botOffset, depthRowB);
+      depthPixelBuffer.put(topOffset, depthRowB);
+      depthPixelBuffer.put(botOffset, depthRowA);
     }
     depthPixelBuffer.clear();
     int prevTex = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
@@ -715,6 +974,7 @@ public final class IOSurfaceBlitter {
     }
     return err == GL11.GL_NO_ERROR;
   }
+
   public boolean blitDepthViaFBO(long metalHandle, int mcDepthTexId,
       int mcFboId, int width, int height) {
     depthBlitFrameCount++;
@@ -755,15 +1015,17 @@ public final class IOSurfaceBlitter {
           depthBlitFrameCount, center, topLeft, mn, mx);
     }
     int rowBytes = width * 4;
-    byte[] rowA = new byte[rowBytes];
-    byte[] rowB = new byte[rowBytes];
+    if (depthRowA == null || depthRowA.length < rowBytes) {
+      depthRowA = new byte[rowBytes];
+      depthRowB = new byte[rowBytes];
+    }
     for (int y = 0; y < height / 2; y++) {
       int topOffset = y * rowBytes;
       int botOffset = (height - 1 - y) * rowBytes;
-      depthPixelBuffer.get(topOffset, rowA);
-      depthPixelBuffer.get(botOffset, rowB);
-      depthPixelBuffer.put(topOffset, rowB);
-      depthPixelBuffer.put(botOffset, rowA);
+      depthPixelBuffer.get(topOffset, depthRowA);
+      depthPixelBuffer.get(botOffset, depthRowB);
+      depthPixelBuffer.put(topOffset, depthRowB);
+      depthPixelBuffer.put(botOffset, depthRowA);
     }
     depthPixelBuffer.clear();
     if (depthTexture == 0 || depthTextureWidth != width ||
@@ -838,6 +1100,7 @@ public final class IOSurfaceBlitter {
     }
     return err == GL11.GL_NO_ERROR;
   }
+
   private int createDepthShaderProgram() {
     int vertShader = compileShader(GL20.GL_VERTEX_SHADER, VERTEX_SHADER);
     int fragShader = compileShader(GL20.GL_FRAGMENT_SHADER, DEPTH_FRAGMENT_SHADER);
@@ -864,6 +1127,7 @@ public final class IOSurfaceBlitter {
     }
     return prog;
   }
+
   private void invalidateTextures() {
     if (glTextureRect != 0) {
       GL11.glDeleteTextures(glTextureRect);
@@ -879,20 +1143,26 @@ public final class IOSurfaceBlitter {
     }
     boundWidth = 0;
     boundHeight = 0;
+
+    glStateQueried = false;
+    quadStateQueried = false;
     resetFastPathState();
   }
+
   private void resetFastPathState() {
     ioSurfaceFailed = false;
     consecutiveFastPathFailures = 0;
     lastIOSurfaceWidth = 0;
     lastIOSurfaceHeight = 0;
   }
+
   private void deleteShaderProgram() {
     if (shaderProgram != 0) {
       GL20.glDeleteProgram(shaderProgram);
       shaderProgram = 0;
     }
   }
+
   private void deleteQuadGeometry() {
     if (vao != 0) {
       GL30.glDeleteVertexArrays(vao);
@@ -903,6 +1173,7 @@ public final class IOSurfaceBlitter {
       vbo = 0;
     }
   }
+
   private void deleteTextures() {
     if (glTexture != 0) {
       GL11.glDeleteTextures(glTexture);
@@ -917,6 +1188,7 @@ public final class IOSurfaceBlitter {
       intermediateTexture = 0;
     }
   }
+
   public void invalidate() {
     boundWidth = 0;
     boundHeight = 0;

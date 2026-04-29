@@ -1,7 +1,9 @@
 package com.pebbles_boon.metalrender.entity;
+
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import net.minecraft.client.render.VertexConsumer;
+
 public class MetalVertexConsumer implements VertexConsumer {
   private static final int VERTEX_STRIDE = 32;
   private final ByteBuffer buffer;
@@ -20,14 +22,17 @@ public class MetalVertexConsumer implements VertexConsumer {
   private int lightPacked;
   private float normalX, normalY, normalZ;
   private int overlayU, overlayV;
+
   public MetalVertexConsumer(ByteBuffer buffer, int maxVertices) {
     this.buffer = buffer;
     this.maxVertices = maxVertices;
     this.vertexCount = 0;
   }
+
   public int getVertexCount() {
     return vertexCount;
   }
+
   @Override
   public VertexConsumer vertex(float x, float y, float z) {
     this.posX = x;
@@ -35,33 +40,39 @@ public class MetalVertexConsumer implements VertexConsumer {
     this.posZ = z;
     return this;
   }
+
   @Override
   public VertexConsumer color(int red, int green, int blue, int alpha) {
     this.colorARGB = (alpha << 24) | (red << 16) | (green << 8) | blue;
     return this;
   }
+
   @Override
   public VertexConsumer color(int argb) {
     this.colorARGB = argb;
     return this;
   }
+
   @Override
   public VertexConsumer texture(float u, float v) {
     this.texU = u;
     this.texV = v;
     return this;
   }
+
   @Override
   public VertexConsumer overlay(int u, int v) {
     this.overlayU = u;
     this.overlayV = v;
     return this;
   }
+
   @Override
   public VertexConsumer light(int u, int v) {
     this.lightPacked = (v << 16) | u;
     return this;
   }
+
   @Override
   public VertexConsumer normal(float x, float y, float z) {
     this.normalX = x;
@@ -70,10 +81,12 @@ public class MetalVertexConsumer implements VertexConsumer {
     commitToQuadBuffer();
     return this;
   }
+
   @Override
   public VertexConsumer lineWidth(float width) {
     return this;
   }
+
   @Override
   public void vertex(float x, float y, float z, int color, float u, float v,
       int overlay, int light, float nx, float ny, float nz) {
@@ -91,6 +104,7 @@ public class MetalVertexConsumer implements VertexConsumer {
     this.normalZ = nz;
     commitToQuadBuffer();
   }
+
   private void commitToQuadBuffer() {
     int idx = quadVertexIndex;
     quadPos[idx][0] = posX;
@@ -107,15 +121,51 @@ public class MetalVertexConsumer implements VertexConsumer {
     quadOverlay[idx][1] = overlayV;
     quadVertexIndex++;
     if (quadVertexIndex == 4) {
-      writeTriangleVertex(0);
-      writeTriangleVertex(1);
-      writeTriangleVertex(2);
-      writeTriangleVertex(0);
-      writeTriangleVertex(2);
-      writeTriangleVertex(3);
+      boolean flipWinding = shouldFlipQuadWinding();
+      if (flipWinding) {
+        writeTriangleVertex(0);
+        writeTriangleVertex(2);
+        writeTriangleVertex(1);
+        writeTriangleVertex(0);
+        writeTriangleVertex(3);
+        writeTriangleVertex(2);
+      } else {
+        writeTriangleVertex(0);
+        writeTriangleVertex(1);
+        writeTriangleVertex(2);
+        writeTriangleVertex(0);
+        writeTriangleVertex(2);
+        writeTriangleVertex(3);
+      }
       quadVertexIndex = 0;
     }
   }
+
+  private boolean shouldFlipQuadWinding() {
+    float ax = quadPos[1][0] - quadPos[0][0];
+    float ay = quadPos[1][1] - quadPos[0][1];
+    float az = quadPos[1][2] - quadPos[0][2];
+    float bx = quadPos[2][0] - quadPos[0][0];
+    float by = quadPos[2][1] - quadPos[0][1];
+    float bz = quadPos[2][2] - quadPos[0][2];
+    float crossX = ay * bz - az * by;
+    float crossY = az * bx - ax * bz;
+    float crossZ = ax * by - ay * bx;
+    float normalX = 0.0f;
+    float normalY = 0.0f;
+    float normalZ = 0.0f;
+    for (int i = 0; i < 4; i++) {
+      normalX += quadNormal[i][0];
+      normalY += quadNormal[i][1];
+      normalZ += quadNormal[i][2];
+    }
+    float normalLenSq = normalX * normalX + normalY * normalY + normalZ * normalZ;
+    if (normalLenSq <= 1.0e-6f) {
+      return false;
+    }
+    return crossX * normalX + crossY * normalY + crossZ * normalZ < 0.0f;
+  }
+
   private void writeTriangleVertex(int qi) {
     if (vertexCount >= maxVertices || buffer.remaining() < VERTEX_STRIDE)
       return;
@@ -141,23 +191,35 @@ public class MetalVertexConsumer implements VertexConsumer {
     buffer.put((byte) g);
     buffer.put((byte) b);
     buffer.put((byte) a);
-    buffer.put((byte) (int) ((nx * 0.5f + 0.5f) * 255.0f));
-    buffer.put((byte) (int) ((ny * 0.5f + 0.5f) * 255.0f));
-    buffer.put((byte) (int) ((nz * 0.5f + 0.5f) * 255.0f));
-    buffer.put((byte) 255);
+
+
+
+
+
+    buffer.put((byte) (int) (nx * 127.0f));
+    buffer.put((byte) (int) (ny * 127.0f));
+    buffer.put((byte) (int) (nz * 127.0f));
+    buffer.put((byte) 0);
     buffer.putShort((short) (ovlU & 0xFFFF));
     buffer.putShort((short) (ovlV & 0xFFFF));
-    int blockL = (lit & 0xFFFF) >> 4;
-    int skyL = ((lit >> 16) & 0xFFFF) >> 4;
+
+
+
+
+
+    int blockL = (lit & 0xFFFF);
+    int skyL = ((lit >> 16) & 0xFFFF);
     buffer.putShort((short) (blockL & 0xFFFF));
     buffer.putShort((short) (skyL & 0xFFFF));
     vertexCount++;
   }
+
   public void reset() {
     vertexCount = 0;
     quadVertexIndex = 0;
     buffer.clear();
   }
+
   public static int getVertexStride() {
     return VERTEX_STRIDE;
   }
