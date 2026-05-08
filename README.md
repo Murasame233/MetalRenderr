@@ -33,7 +33,6 @@ MetalRender is inspired by Nvidium (the amazing mod for Nvidia GPUs that makes y
 - Will still load on other GPUs but won't offer any additional benefits or changes
 - Shaders are not yet supported, they might be added in the future
 - This should be compatible with most other mods, if it isn't please add a Issue
-- MarioMastr helped me a ton by making a fork that addressed some MAJOR issues in native code! Thank them too!
 
 ---
 
@@ -51,17 +50,14 @@ MetalRender is inspired by Nvidium (the amazing mod for Nvidia GPUs that makes y
 
 - Can I run MetalRender on non-Apple Silicon hardware?
 
-  Yes you can! But there just might be a crash, best case scenario it just doesn't offer any benefits. I'm working to add other optimisation features that don't need
-  Apple Silicon to run so that even Intel/AMD/Nvidia people can enjoy MetalRender. You can expect that maybe next year, I'm busy with school and everything!
+  Yes you can but there just might be a crash, best case scenario it just doesn't offer any benefits. 
 
 - Where can I put suggestions?
 
   There is a Suggestion tag on the Issues tab now! Please share your suggestions for MetalRender, I'm open to all suggestions and thanks for your help making
   MetalRender better for everyone!
 
-- Does it work with xxx launcher?
-
-  As long as your launcher doesn't mess with display libraries, GLFW or EGL (like Prism does), it would work. It has been verified to NOT work on Prism launcher. The Offical Mojang launcher works.
+- ~~Does it work with xxx launcher?~~ resolved
 
 ---
 
