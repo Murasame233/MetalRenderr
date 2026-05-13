@@ -11,7 +11,6 @@ import com.pebbles_boon.metalrender.nativebridge.NativeMemory;
 import com.pebbles_boon.metalrender.particle.MetalParticleRenderer;
 import com.pebbles_boon.metalrender.performance.PerformanceController;
 import com.pebbles_boon.metalrender.render.chunk.CustomChunkMesher;
-import com.pebbles_boon.metalrender.render.chunk.MetalChunkContext;
 import com.pebbles_boon.metalrender.sodium.backend.MeshShaderBackend;
 import com.pebbles_boon.metalrender.util.MetalLogger;
 import java.nio.ByteBuffer;
@@ -27,7 +26,56 @@ import net.minecraft.world.chunk.WorldChunk;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 
+@SuppressWarnings("unused")
 public class MetalWorldRenderer {
+<<<<<<< HEAD
+=======
+  private static final int DEFAULT_MAX_MESHES = 65536;
+  private static final int PINNED_RENDER_DISTANCE = 32;
+  private static final int PINNED_MAX_MESHES = 131072;
+  private static final long CHUNK_BUILD_BUDGET_NS = 3_000_000L;
+  private static final int MIN_CHUNK_BUILDS_PER_FRAME = 6;
+  private static final int CHUNK_BACKLOG_PRESSURE_THRESHOLD = 384;
+  private static final int CHUNK_BACKLOG_HEAVY_THRESHOLD = 1024;
+  private static final int CHUNK_SCAN_PRESSURE_THRESHOLD = 2048;
+  private static final int CHUNK_SCAN_SATURATED_THRESHOLD = 8192;
+  private static final long CHUNK_BACKLOG_BUILD_BURST_NS = 8_000_000L;
+  private static final int MIN_CHUNK_BACKLOG_BUILDS_PER_FRAME = 24;
+  private static final long CHUNK_HEAVY_BACKLOG_BUILD_BURST_NS = 12_000_000L;
+  private static final int MIN_CHUNK_HEAVY_BACKLOG_BUILDS_PER_FRAME = 40;
+  private static final long CHUNK_SATURATED_BUILD_BUDGET_NS = 1_500_000L;
+  private static final int MIN_CHUNK_SATURATED_BUILDS_PER_FRAME = 4;
+  private static final long CHUNK_TURN_BUILD_BURST_NS = 6_000_000L;
+  private static final int MIN_CHUNK_TURN_BUILDS_PER_FRAME = 18;
+  private static final long CHUNK_BUILD_WAIT_BUDGET_NS = 1_000_000L;
+  private static final int MIN_CHUNK_BUILDS_DURING_WAIT = 2;
+  private static final int BASE_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 8;
+  private static final int BACKLOG_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 16;
+  private static final int HEAVY_BACKLOG_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 24;
+  private static final int TURN_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 24;
+  private static final int WAIT_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 8;
+  private static final int SATURATED_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 2;
+  private static final long CHUNK_BUILD_WAIT_WINDOW_NS = 3_000_000L;
+  private static final int HIGH_PRIORITY_LOADED_VERTICAL_RANGE = 3;
+  private static final int TURN_PRIORITY_LOADED_CHUNK_RANGE = 24;
+  private static final float BUILD_SORT_REORDER_DOT_THRESHOLD = 0.9848f;
+  private static final int TURN_PRIORITY_SCAN_FRAMES = 12;
+  private static final int TURN_PRIORITY_FORWARD_SCAN_DEPTH = 6;
+  private static final float TURN_PRIORITY_SCAN_COS_THRESHOLD = 0.45f;
+  private static final int ACTIVE_CLOSE_RANGE_RESCAN_INTERVAL = 2;
+  private static final int IDLE_CLOSE_RANGE_RESCAN_INTERVAL = 6;
+  private static final int HOT_LOAD_REBUILD_RANGE = 12;
+  private static final int PRESSURED_CLOSE_SCAN_RANGE = 6;
+  private static final int SATURATED_CLOSE_SCAN_RANGE = 4;
+  private static final long FULL_RENDERDIST_RESCAN_INTERVAL_NS = 1_500_000_000L;
+  private static final int TEXTURE_SYNC_PRESSURE_THRESHOLD = 64;
+  private static final int PRESSURED_ATLAS_SYNC_FRAME_INTERVAL = 12;
+  private static final int PRESSURED_LIGHTMAP_SYNC_FRAME_INTERVAL = 8;
+  private static final int JAVA_PROFILE_EMIT_INTERVAL = 240;
+  private static volatile java.lang.reflect.Field skyLightFactorField;
+  private static volatile java.lang.reflect.Method skyLightProbeGetValueMethod;
+  private static volatile boolean skyLightLookupFailed;
+>>>>>>> b6cbe47 (WIP again :>)
   private static MetalWorldRenderer instance;
   private final FrustumCuller frustumCuller;
   private final MetalEntityRenderer entityRenderer;
@@ -716,6 +764,11 @@ public class MetalWorldRenderer {
         if (inhousePipeline != 0) {
           NativeBridge.nSetPipelineState(frameCtx, inhousePipeline);
         }
+<<<<<<< HEAD
+=======
+        float skyFactor = resolveSkyLightFactor(camera, tickDelta);
+        NativeBridge.nSetSkyBrightness(frameCtx, skyFactor);
+>>>>>>> b6cbe47 (WIP again :>)
         if (!skipTerrainDraw) {
           NativeBridge.nSetWaterFog(frameCtx, (cameraInWater || cameraInLava) ? 1.0f : 0.0f);
           entityRenderer.renderCapturedEntities(frameCtx, cameraInWater);
@@ -886,6 +939,34 @@ public class MetalWorldRenderer {
     out[22] = vp.m23() - vp.m22();
     out[23] = vp.m33() - vp.m32();
     normalizePlane(out, 20);
+  }
+
+  private static float resolveSkyLightFactor(Camera camera, float tickDelta) {
+    if (camera == null || skyLightLookupFailed) {
+      return 1.0f;
+    }
+    Object attributeProbe = camera.attributeProbe();
+    if (attributeProbe == null) {
+      return 1.0f;
+    }
+    try {
+      java.lang.reflect.Field factorField = skyLightFactorField;
+      java.lang.reflect.Method getValueMethod = skyLightProbeGetValueMethod;
+      if (factorField == null || getValueMethod == null) {
+        Class<?> attributesClass = Class.forName("net.minecraft.world.attribute.EnvironmentAttributes");
+        factorField = attributesClass.getField("SKY_LIGHT_FACTOR");
+        getValueMethod = attributeProbe.getClass().getMethod("getValue", factorField.getType(), float.class);
+        skyLightFactorField = factorField;
+        skyLightProbeGetValueMethod = getValueMethod;
+      }
+      Object value = getValueMethod.invoke(attributeProbe, factorField.get(null), tickDelta);
+      if (value instanceof Number number) {
+        return number.floatValue();
+      }
+    } catch (ReflectiveOperationException | RuntimeException ignored) {
+      skyLightLookupFailed = true;
+    }
+    return 1.0f;
   }
 
   private static void normalizePlane(float[] planes, int offset) {
@@ -1371,6 +1452,7 @@ public class MetalWorldRenderer {
   private int buildFromPendingSet(int playerChunkX, int playerChunkZ, long budgetNanos) {
     if (pendingBuildSet.isEmpty())
       return 0;
+<<<<<<< HEAD
 
 
 
@@ -1498,6 +1580,9 @@ public class MetalWorldRenderer {
 
     boolean needsResync = sortedBuildList.isEmpty() && !pendingBuildSet.isEmpty();
     if (sortedListDirty || needsResync) {
+=======
+    if (sortedListDirty) {
+>>>>>>> b6cbe47 (WIP again :>)
       sortedBuildList.clear();
       sortedBuildList.addAll(pendingBuildSet);
       final int pcx = playerChunkX;
