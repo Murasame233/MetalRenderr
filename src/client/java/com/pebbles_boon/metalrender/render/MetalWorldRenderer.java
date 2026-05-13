@@ -10,7 +10,6 @@ import com.pebbles_boon.metalrender.nativebridge.NativeBridge;
 import com.pebbles_boon.metalrender.nativebridge.NativeMemory;
 import com.pebbles_boon.metalrender.particle.MetalParticleRenderer;
 import com.pebbles_boon.metalrender.render.chunk.CustomChunkMesher;
-import com.pebbles_boon.metalrender.render.chunk.MetalChunkContext;
 import com.pebbles_boon.metalrender.sodium.backend.MeshShaderBackend;
 import com.pebbles_boon.metalrender.util.MetalLogger;
 import java.nio.ByteBuffer;
@@ -33,6 +32,7 @@ import net.minecraft.world.phys.HitResult;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 
+@SuppressWarnings("unused")
 public class MetalWorldRenderer {
   private static final int DEFAULT_MAX_MESHES = 65536;
   private static final int PINNED_RENDER_DISTANCE = 32;
@@ -76,6 +76,9 @@ public class MetalWorldRenderer {
   private static final int PRESSURED_ATLAS_SYNC_FRAME_INTERVAL = 12;
   private static final int PRESSURED_LIGHTMAP_SYNC_FRAME_INTERVAL = 8;
   private static final int JAVA_PROFILE_EMIT_INTERVAL = 240;
+  private static volatile java.lang.reflect.Field skyLightFactorField;
+  private static volatile java.lang.reflect.Method skyLightProbeGetValueMethod;
+  private static volatile boolean skyLightLookupFailed;
   private static MetalWorldRenderer instance;
   private final FrustumCuller frustumCuller;
   private final MetalEntityRenderer entityRenderer;
@@ -328,8 +331,7 @@ public class MetalWorldRenderer {
         if (inhousePipeline != 0) {
           NativeBridge.nSetPipelineState(frameCtx, inhousePipeline);
         }
-        float skyFactor = camera.attributeProbe()
-            .getValue(net.minecraft.world.attribute.EnvironmentAttributes.SKY_LIGHT_FACTOR, tickDelta);
+        float skyFactor = resolveSkyLightFactor(camera, tickDelta);
         NativeBridge.nSetSkyBrightness(frameCtx, skyFactor);
         if (!skipTerrainDraw) {
           long ibHandle = chunkMesher.getGlobalIndexBuffer();
@@ -378,6 +380,34 @@ public class MetalWorldRenderer {
     out[22] = vp.m23() - vp.m22();
     out[23] = vp.m33() - vp.m32();
     normalizePlane(out, 20);
+  }
+
+  private static float resolveSkyLightFactor(Camera camera, float tickDelta) {
+    if (camera == null || skyLightLookupFailed) {
+      return 1.0f;
+    }
+    Object attributeProbe = camera.attributeProbe();
+    if (attributeProbe == null) {
+      return 1.0f;
+    }
+    try {
+      java.lang.reflect.Field factorField = skyLightFactorField;
+      java.lang.reflect.Method getValueMethod = skyLightProbeGetValueMethod;
+      if (factorField == null || getValueMethod == null) {
+        Class<?> attributesClass = Class.forName("net.minecraft.world.attribute.EnvironmentAttributes");
+        factorField = attributesClass.getField("SKY_LIGHT_FACTOR");
+        getValueMethod = attributeProbe.getClass().getMethod("getValue", factorField.getType(), float.class);
+        skyLightFactorField = factorField;
+        skyLightProbeGetValueMethod = getValueMethod;
+      }
+      Object value = getValueMethod.invoke(attributeProbe, factorField.get(null), tickDelta);
+      if (value instanceof Number number) {
+        return number.floatValue();
+      }
+    } catch (ReflectiveOperationException | RuntimeException ignored) {
+      skyLightLookupFailed = true;
+    }
+    return 1.0f;
   }
 
   private static void normalizePlane(float[] planes, int offset) {
@@ -828,8 +858,6 @@ public class MetalWorldRenderer {
       long budgetNanos, int minBuilds, int highPrioritySubmissions) {
     if (pendingBuildSet.isEmpty())
       return 0;
-    Minecraft mc = Minecraft.getInstance();
-    ClientLevel world = mc != null ? mc.level : null;
     if (sortedListDirty) {
       sortedBuildList.clear();
       sortedBuildList.addAll(pendingBuildSet);
