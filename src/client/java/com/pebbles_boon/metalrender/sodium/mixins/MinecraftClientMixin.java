@@ -4,28 +4,27 @@ import com.pebbles_boon.metalrender.MetalRenderClient;
 import com.pebbles_boon.metalrender.performance.PerformanceController;
 import com.pebbles_boon.metalrender.render.MetalWorldRenderer;
 import com.pebbles_boon.metalrender.util.MetalLogger;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.world.ClientWorld;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
 import org.spongepowered.asm.mixin.Mixin;
-import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-@Mixin(MinecraftClient.class)
+@Mixin(Minecraft.class)
 public class MinecraftClientMixin {
   @Unique
   private boolean metalrender$worldWasLoaded = false;
   @Unique
   private int metalrender$debugCounter = 0;
 
-  @Inject(method = "render", at = @At("HEAD"))
+  @Inject(method = "runTick", at = @At("HEAD"))
   private void metalrender$startFrame(boolean tick, CallbackInfo ci) {
     if (MetalRenderClient.isEnabled()) {
       PerformanceController.startFrame();
-      MinecraftClient client = (MinecraftClient) (Object) this;
-      ClientWorld world = client.world;
+      Minecraft mc = (Minecraft) (Object) this;
+      ClientLevel world = mc.level;
       metalrender$debugCounter++;
       if (metalrender$debugCounter % 600 == 1) {
         MetalLogger.deepInfo(
@@ -58,14 +57,14 @@ public class MinecraftClientMixin {
       }
       if (world != null) {
         MetalWorldRenderer wr = MetalRenderClient.getWorldRenderer();
-        if (wr != null && wr.shouldRenderWithMetal()) {
+        if (wr != null && wr.metalActive()) {
           wr.prepareMeshes();
         }
       }
     }
   }
 
-  @Inject(method = "render", at = @At("TAIL"))
+  @Inject(method = "runTick", at = @At("TAIL"))
   private void metalrender$endFrame(boolean tick, CallbackInfo ci) {
     if (MetalRenderClient.isEnabled()) {
       PerformanceController.endFrame();

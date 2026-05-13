@@ -1,31 +1,34 @@
 package com.pebbles_boon.metalrender.config;
 
+import com.pebbles_boon.metalrender.util.MetalLogger;
+
 public final class MetalRenderConfig {
   public boolean enableMetalRendering = true;
   public boolean enableSimpleLighting = true;
   public boolean enableDebugOverlay = false;
+  public boolean debugPinkBlockTint = false;
   public int zone1Radius = 16;
   public int zone2Radius = 64;
   public float lodTransitionDistance = 0.8f;
   public int biomeTransitionDetail = 2;
-  public boolean enableZone2Lod = true;
+  public boolean enableZone2Lod = false;
   public int leafCullingMode = 0;
   public int targetFrameRate = 60;
   public int maxMemoryMB = 2048;
   public boolean enableTripleBuffering = true;
   public boolean enableMemoryPressureFallback = true;
+  public boolean enableBurstThreadMode = false;
   public boolean enableMeshShaders = true;
-  public boolean enableArgumentBuffers = false;
-
+  public boolean enableArgumentBuffers = true;
 
   public boolean enableProgrammableBlending = false;
-  public boolean enableIndirectCommandBuffers = false;
-  public boolean enableMemorylessTargets = false;
-  private static volatile int lod1Distance = 8;
-  private static volatile int lod2Distance = 16;
-  private static volatile int lod3Distance = 24;
-  private static volatile int lod4Distance = 32;
-  private static volatile boolean lodEnabled = true;
+  public boolean enableIndirectCommandBuffers = true;
+  public boolean enableMemorylessTargets = true;
+  private static volatile int lod1Distance = 4;
+  private static volatile int lod2Distance = 8;
+  private static volatile int lod3Distance = 12;
+  private static volatile int lod4Distance = 16;
+  private static volatile boolean lodEnabled = false;
   private static volatile boolean mirrorUploads = false;
   private static volatile boolean swapOpaque = false;
   private static volatile boolean swapCutout = false;
@@ -34,11 +37,35 @@ public final class MetalRenderConfig {
   private static volatile boolean occlusionCulling = false;
   private static volatile float resolutionScale = 1.0f;
   private static volatile boolean deepDebugActive = false;
-
+  private static volatile boolean debugPinkBlockTintActive = false;
 
   private static java.nio.file.Path configFile() {
     return net.fabricmc.loader.api.FabricLoader.getInstance()
         .getConfigDir().resolve("metalrender.json");
+  }
+
+  private static java.nio.file.Path legacyConfigFile() {
+    return net.fabricmc.loader.api.FabricLoader.getInstance()
+        .getConfigDir().resolve("metalrender").resolve("metalrender.json");
+  }
+
+  private static java.nio.file.Path resolveLoadConfigPath() {
+    java.nio.file.Path primary = configFile();
+    java.nio.file.Path legacy = legacyConfigFile();
+    try {
+      boolean hasPrimary = java.nio.file.Files.exists(primary);
+      boolean hasLegacy = java.nio.file.Files.exists(legacy);
+      if (!hasPrimary && hasLegacy) {
+        java.nio.file.Files.createDirectories(primary.getParent());
+        java.nio.file.Files.copy(
+            legacy,
+            primary,
+            java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        MetalLogger.info("Migrated MetalRender config from legacy path to %s", primary.toAbsolutePath().toString());
+      }
+    } catch (Exception ignored) {
+    }
+    return primary;
   }
 
   private static java.nio.file.Path deepDebugFlagFile() {
@@ -58,14 +85,16 @@ public final class MetalRenderConfig {
     }
   }
 
-
   public static MetalRenderConfig load() {
     activateOneRunDeepDebugIfRequested();
     MetalRenderConfig cfg = new MetalRenderConfig();
 
     try {
-      java.nio.file.Path path = configFile();
+      java.nio.file.Path path = resolveLoadConfigPath();
       if (java.nio.file.Files.exists(path)) {
+        if (!path.equals(configFile())) {
+          MetalLogger.info("Loading MetalRender config from legacy path: %s", path.toAbsolutePath().toString());
+        }
         String raw = java.nio.file.Files.readString(path);
         com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(raw).getAsJsonObject();
 
@@ -75,6 +104,8 @@ public final class MetalRenderConfig {
           cfg.enableSimpleLighting = obj.get("enableSimpleLighting").getAsBoolean();
         if (obj.has("enableDebugOverlay"))
           cfg.enableDebugOverlay = obj.get("enableDebugOverlay").getAsBoolean();
+        if (obj.has("debugPinkBlockTint"))
+          cfg.debugPinkBlockTint = obj.get("debugPinkBlockTint").getAsBoolean();
         if (obj.has("zone1Radius"))
           cfg.zone1Radius = obj.get("zone1Radius").getAsInt();
         if (obj.has("zone2Radius"))
@@ -95,6 +126,8 @@ public final class MetalRenderConfig {
           cfg.enableTripleBuffering = obj.get("enableTripleBuffering").getAsBoolean();
         if (obj.has("enableMemoryPressureFallback"))
           cfg.enableMemoryPressureFallback = obj.get("enableMemoryPressureFallback").getAsBoolean();
+        if (obj.has("enableBurstThreadMode"))
+          cfg.enableBurstThreadMode = obj.get("enableBurstThreadMode").getAsBoolean();
         if (obj.has("enableMeshShaders"))
           cfg.enableMeshShaders = obj.get("enableMeshShaders").getAsBoolean();
         if (obj.has("enableArgumentBuffers"))
@@ -126,9 +159,11 @@ public final class MetalRenderConfig {
 
     }
 
-
+    lodEnabled = false;
+    cfg.enableZone2Lod = false;
 
     applyStableQualityFallback(cfg);
+    debugPinkBlockTintActive = cfg.debugPinkBlockTint;
 
     cfg.loadFeatureFlags();
     loadFromSystemProperties();
@@ -139,16 +174,10 @@ public final class MetalRenderConfig {
   }
 
   private static void applyStableQualityFallback(MetalRenderConfig cfg) {
-    cfg.enableIndirectCommandBuffers = false;
-    cfg.enableMeshShaders = false;
-    cfg.enableArgumentBuffers = false;
-    cfg.enableProgrammableBlending = false;
-    cfg.enableMemorylessTargets = false;
     aggressiveFrustumCulling = false;
     occlusionCulling = false;
     resolutionScale = 1.0f;
   }
-
 
   public void save() {
 
@@ -159,22 +188,26 @@ public final class MetalRenderConfig {
     System.setProperty("metalrender.feature.argbuf", String.valueOf(enableArgumentBuffers));
     System.setProperty("metalrender.feature.oit", String.valueOf(enableProgrammableBlending));
     System.setProperty("metalrender.feature.memoryless", String.valueOf(enableMemorylessTargets));
+    System.setProperty("metalrender.debug.pinkBlockTint", String.valueOf(debugPinkBlockTint));
+    debugPinkBlockTintActive = debugPinkBlockTint;
 
     try {
       com.google.gson.JsonObject obj = new com.google.gson.JsonObject();
       obj.addProperty("enableMetalRendering", enableMetalRendering);
       obj.addProperty("enableSimpleLighting", enableSimpleLighting);
       obj.addProperty("enableDebugOverlay", enableDebugOverlay);
+      obj.addProperty("debugPinkBlockTint", debugPinkBlockTint);
       obj.addProperty("zone1Radius", zone1Radius);
       obj.addProperty("zone2Radius", zone2Radius);
       obj.addProperty("lodTransitionDistance", lodTransitionDistance);
       obj.addProperty("biomeTransitionDetail", biomeTransitionDetail);
-      obj.addProperty("enableZone2Lod", enableZone2Lod);
+      obj.addProperty("enableZone2Lod", false);
       obj.addProperty("leafCullingMode", leafCullingMode);
       obj.addProperty("targetFrameRate", targetFrameRate);
       obj.addProperty("maxMemoryMB", maxMemoryMB);
       obj.addProperty("enableTripleBuffering", enableTripleBuffering);
       obj.addProperty("enableMemoryPressureFallback", enableMemoryPressureFallback);
+      obj.addProperty("enableBurstThreadMode", enableBurstThreadMode);
       obj.addProperty("enableMeshShaders", enableMeshShaders);
       obj.addProperty("enableArgumentBuffers", enableArgumentBuffers);
       obj.addProperty("enableProgrammableBlending", enableProgrammableBlending);
@@ -185,7 +218,7 @@ public final class MetalRenderConfig {
       obj.addProperty("savedLod2Distance", lod2Distance);
       obj.addProperty("savedLod3Distance", lod3Distance);
       obj.addProperty("savedLod4Distance", lod4Distance);
-      obj.addProperty("savedLodEnabled", lodEnabled);
+      obj.addProperty("savedLodEnabled", false);
       obj.addProperty("savedResolutionScale", resolutionScale);
       obj.addProperty("savedAggressiveFrustumCulling", aggressiveFrustumCulling);
       obj.addProperty("savedOcclusionCulling", occlusionCulling);
@@ -228,6 +261,14 @@ public final class MetalRenderConfig {
 
   public static boolean isDeepDebugActive() {
     return deepDebugActive;
+  }
+
+  public static boolean debugPinkBlockTint() {
+    return debugPinkBlockTintActive;
+  }
+
+  public static void setDebugPinkBlockTint(boolean enabled) {
+    debugPinkBlockTintActive = enabled;
   }
 
   public static boolean isOneRunDeepDebugRequested() {
@@ -281,11 +322,11 @@ public final class MetalRenderConfig {
   }
 
   public static boolean lodEnabled() {
-    return lodEnabled;
+    return false;
   }
 
   public static void setLodEnabled(boolean v) {
-    lodEnabled = v;
+    lodEnabled = false;
   }
 
   public static int lod1Distance() {
@@ -321,16 +362,6 @@ public final class MetalRenderConfig {
   }
 
   public static int getLodLevel(int chunkDistance) {
-    if (!lodEnabled)
-      return 0;
-    if (chunkDistance >= lod4Distance)
-      return 4;
-    if (chunkDistance >= lod3Distance)
-      return 3;
-    if (chunkDistance >= lod2Distance)
-      return 2;
-    if (chunkDistance >= lod1Distance)
-      return 1;
     return 0;
   }
 
@@ -342,14 +373,14 @@ public final class MetalRenderConfig {
     aggressiveFrustumCulling = getBool("metalrender.culling.frustum", aggressiveFrustumCulling);
     occlusionCulling = getBool("metalrender.culling.occlusion", occlusionCulling);
     resolutionScale = getFloat("metalrender.render.resolutionScale", resolutionScale);
+    debugPinkBlockTintActive = getBool("metalrender.debug.pinkBlockTint", debugPinkBlockTintActive);
   }
-
 
   public void loadFeatureFlags() {
     enableIndirectCommandBuffers = getBool("metalrender.feature.icb", enableIndirectCommandBuffers);
     enableMeshShaders = getBool("metalrender.feature.mesh", enableMeshShaders);
     enableArgumentBuffers = getBool("metalrender.feature.argbuf", enableArgumentBuffers);
-    enableProgrammableBlending = false;
+    enableProgrammableBlending = getBool("metalrender.feature.oit", enableProgrammableBlending);
     enableMemorylessTargets = getBool("metalrender.feature.memoryless", enableMemorylessTargets);
   }
 
@@ -374,4 +405,5 @@ public final class MetalRenderConfig {
   private static float clamp(float v, float lo, float hi) {
     return v < lo ? lo : (v > hi ? hi : v);
   }
+
 }

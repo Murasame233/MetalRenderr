@@ -103,9 +103,11 @@ fragment float4 fragment_entity(
     float waterFog = overlayParams.z;
     if (waterFog > 0.0) {
         float dist = in.viewDistance;
-        float fogFactor = clamp(dist / 32.0, 0.0, 0.85);
+        float fogDistance = mix(72.0, 32.0, waterFog);
+        float maxFog = mix(0.25, 0.85, waterFog);
+        float fogFactor = clamp(dist / fogDistance, 0.0, 1.0) * maxFog;
         baseColor.rgb = mix(baseColor.rgb, float3(0.05, 0.12, 0.3), fogFactor);
-        baseColor.a = mix(baseColor.a, 0.3, fogFactor);
+        baseColor.a *= (1.0 - fogFactor * mix(0.12, 0.7, waterFog));
     }
     return float4(baseColor.rgb, baseColor.a);
 }
@@ -131,9 +133,13 @@ fragment float4 fragment_entity_translucent(
     float waterFog = overlayParams.z;
     if (waterFog > 0.0) {
         float dist = in.viewDistance;
-        float fogFactor = clamp(dist / 32.0, 0.0, 0.85);
-        baseColor.rgb = mix(baseColor.rgb, float3(0.05, 0.12, 0.3), fogFactor);
-        baseColor.a *= (1.0 - fogFactor * 0.4);
+        float deepWaterView = smoothstep(0.95, 1.0, waterFog);
+        float3 fogTint = mix(float3(0.18, 0.38, 0.62), float3(0.05, 0.12, 0.3), deepWaterView);
+        float fogDistance = mix(18.0, 28.0, deepWaterView);
+        float maxFog = mix(0.30, 0.85, deepWaterView);
+        float fogFactor = clamp((dist + 4.0) / fogDistance, 0.0, 1.0) * maxFog;
+        baseColor.rgb = mix(baseColor.rgb, fogTint, fogFactor);
+        baseColor.a *= (1.0 - fogFactor * mix(0.20, 0.45, deepWaterView));
     }
     return baseColor;
 }
@@ -175,9 +181,11 @@ fragment float4 fragment_particle(
     float waterFog = overlayParams.z;
     if (waterFog > 0.0) {
         float dist = in.viewDistance;
-        float fogFactor = clamp(dist / 24.0, 0.0, 0.85);
+        float fogDistance = mix(48.0, 24.0, waterFog);
+        float maxFog = mix(0.2, 0.85, waterFog);
+        float fogFactor = clamp(dist / fogDistance, 0.0, 1.0) * maxFog;
         baseColor.rgb = mix(baseColor.rgb, float3(0.05, 0.12, 0.3), fogFactor);
-        baseColor.a *= (1.0 - fogFactor * 0.5);
+        baseColor.a *= (1.0 - fogFactor * mix(0.18, 0.5, waterFog));
     }
     return baseColor;
 }

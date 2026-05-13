@@ -77,7 +77,6 @@ public final class MetalRenderer implements RenderBackend {
   public void beginFrame(float[] viewProj) {
   }
 
-
   private final float[] reusableMatrixArr = new float[16];
 
   public void setProjectionMatrix(Matrix4f proj) {
@@ -104,7 +103,7 @@ public final class MetalRenderer implements RenderBackend {
       NativeBridge.nBindTexture(handle, textureHandle, slot);
   }
 
-  public long getCurrentFrameContext() {
+  public long frameCtx() {
     return handle != 0 ? NativeBridge.nGetCurrentFrameContext(handle) : 0;
   }
 
@@ -146,7 +145,7 @@ public final class MetalRenderer implements RenderBackend {
   @Override
   public void drawIndexed(long vbo, long ibo, int indexCount, int firstIndex,
       int baseVertex) {
-    long ctx = getCurrentFrameContext();
+    long ctx = frameCtx();
     if (ctx != 0) {
       NativeBridge.nDrawIndexedBuffer(ctx, vbo, ibo, indexCount, firstIndex);
     }

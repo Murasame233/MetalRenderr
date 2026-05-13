@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")"
-JAVA_HOME=${JAVA_HOME:-$(/usr/libexec/java_home -v 21)}
+JAVA_HOME=${JAVA_HOME:-$(/usr/libexec/java_home -v 25)}
 mkdir -p build/native
 clang++ -fobjc-arc -shared \
   -o build/native/libmetalrender.dylib \

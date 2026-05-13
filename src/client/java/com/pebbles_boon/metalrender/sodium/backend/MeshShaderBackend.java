@@ -1,4 +1,5 @@
 package com.pebbles_boon.metalrender.sodium.backend;
+
 import com.pebbles_boon.metalrender.MetalRenderClient;
 import com.pebbles_boon.metalrender.backend.MetalRenderer;
 import com.pebbles_boon.metalrender.nativebridge.MeshShaderNative;
@@ -7,19 +8,21 @@ import com.pebbles_boon.metalrender.nativebridge.NativeBridge;
 import com.pebbles_boon.metalrender.util.MetalLogger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+
 public class MeshShaderBackend {
-  private long[] terrainPipelineHandles = new long[3];
+  private long[] pipelines = new long[3];
   private long fallbackPipelineHandle;
   private boolean active;
   private boolean meshShadersAvailable;
   private boolean gpuDrivenEnabled;
   private ByteBuffer meshletUploadBuffer;
-  private int meshletUploadCapacity;
-  private int currentMeshletCount;
-  private int lastVisibleCount;
-  private int lastDispatchedThreadgroups;
+  private int uploadCap;
+  private int meshlets;
+  private int visible;
+  private int threadgroups;
   private long lastStatsLogMs;
   private static final long STATS_LOG_INTERVAL_MS = 5000;
+
   public void initialize() {
     MetalRenderer renderer = MetalRenderClient.getRenderer();
     if (renderer == null || !renderer.isAvailable())
@@ -29,39 +32,40 @@ public class MeshShaderBackend {
     if (meshShadersAvailable && library != 0) {
       long[] handles = MeshShaderNative.createTerrainMeshPipelines(library);
       if (handles != null && handles.length >= 3) {
-        terrainPipelineHandles[0] = handles[0];
-        terrainPipelineHandles[1] = handles[1];
-        terrainPipelineHandles[2] = handles[2];
+        pipelines[0] = handles[0];
+        pipelines[1] = handles[1];
+        pipelines[2] = handles[2];
         if (handles[0] != 0) {
           MetalLogger.info("Mesh shader terrain pipelines created: opaque=0x%X, cutout=0x%X, emissive=0x%X",
               handles[0], handles[1], handles[2]);
         }
       }
-      if (terrainPipelineHandles[0] == 0) {
+      if (pipelines[0] == 0) {
         long device = renderer.getBackend().getDeviceHandle();
         fallbackPipelineHandle = MeshShaderNative.createMeshPipeline(
             device, library, "object_terrain", "mesh_terrain",
             "fragment_terrain_mesh_opaque");
       }
     }
-    meshletUploadCapacity = 4096;
-    meshletUploadBuffer = ByteBuffer.allocateDirect(meshletUploadCapacity * 32)
+    uploadCap = 4096;
+    meshletUploadBuffer = ByteBuffer.allocateDirect(uploadCap * 32)
         .order(ByteOrder.nativeOrder());
     active = true;
-    gpuDrivenEnabled = meshShadersAvailable && (terrainPipelineHandles[0] != 0 || fallbackPipelineHandle != 0);
+    gpuDrivenEnabled = meshShadersAvailable && (pipelines[0] != 0 || fallbackPipelineHandle != 0);
     MetalLogger.info("Mesh shader backend initialized (mesh shaders: %s, GPU-driven: %s, pipelines: %d)",
         meshShadersAvailable ? "supported" : "unsupported",
         gpuDrivenEnabled ? "enabled" : "disabled",
         MeshShaderNative.getActivePipelineCount());
   }
+
   public void prepareMeshlets(int[] meshletVertexOffsets, int[] meshletIndexOffsets,
       int[] meshletVertexCounts, int[] meshletTriangleCounts,
       int[] meshletLodLevels, int[] meshletChunkIndices, int count) {
     if (!active || !gpuDrivenEnabled || count <= 0)
       return;
-    if (count > meshletUploadCapacity) {
-      meshletUploadCapacity = count + (count >> 2);
-      meshletUploadBuffer = ByteBuffer.allocateDirect(meshletUploadCapacity * 32)
+    if (count > uploadCap) {
+      uploadCap = count + (count >> 2);
+      meshletUploadBuffer = ByteBuffer.allocateDirect(uploadCap * 32)
           .order(ByteOrder.nativeOrder());
     }
     meshletUploadBuffer.clear();
@@ -77,60 +81,66 @@ public class MeshShaderBackend {
     }
     meshletUploadBuffer.flip();
     MeshShaderNative.uploadMeshletBuffer(0, meshletUploadBuffer, count);
-    currentMeshletCount = count;
+    meshlets = count;
   }
-  public void drawChunkMesh(long frameContext, long argumentBuffer,
+
+  public void drawChunkMesh(long ctx, long argBuf,
       int objectThreadgroups, int meshThreadsPerGroup) {
-    if (!active || frameContext == 0)
+    if (!active || ctx == 0)
       return;
     long pipeline = getPipeline(0);
     if (pipeline != 0) {
       MeshShaderNative.drawMeshThreadgroups(
-          frameContext, pipeline, objectThreadgroups,
-          meshThreadsPerGroup, argumentBuffer);
-      lastDispatchedThreadgroups = objectThreadgroups;
+          ctx, pipeline, objectThreadgroups,
+          meshThreadsPerGroup, argBuf);
+      threadgroups = objectThreadgroups;
     }
     logStatsIfNeeded();
   }
-  public void drawChunkMeshPass(long frameContext, int passIndex,
-      long argumentBuffer, int threadgroups) {
-    if (!active || frameContext == 0 || passIndex < 0 || passIndex > 2)
+
+  public void drawChunkMeshPass(long ctx, int passIndex,
+      long argBuf, int threadgroups) {
+    if (!active || ctx == 0 || passIndex < 0 || passIndex > 2)
       return;
     long pipeline = getPipeline(passIndex);
     if (pipeline != 0) {
       MeshShaderNative.drawMeshThreadgroups(
-          frameContext, pipeline, threadgroups, 256, argumentBuffer);
+          ctx, pipeline, threadgroups, 256, argBuf);
     }
   }
+
   public void dispatchTerrainFromCullResults(long handle, long argumentBuffer) {
     if (!active)
       return;
     int visibleCount = NativeBridge.nGetGPUVisibleCount(handle);
-    lastVisibleCount = visibleCount;
+    visible = visibleCount;
     if (visibleCount > 0) {
       MeshShaderNative.dispatchTerrain(handle, visibleCount, argumentBuffer);
     }
   }
+
   private long getPipeline(int passIndex) {
-    if (passIndex >= 0 && passIndex < 3 && terrainPipelineHandles[passIndex] != 0) {
-      return terrainPipelineHandles[passIndex];
+    if (passIndex >= 0 && passIndex < 3 && pipelines[passIndex] != 0) {
+      return pipelines[passIndex];
     }
     return fallbackPipelineHandle;
   }
+
   private void logStatsIfNeeded() {
     long now = System.currentTimeMillis();
     if (now - lastStatsLogMs > STATS_LOG_INTERVAL_MS) {
       lastStatsLogMs = now;
       MetalLogger.info("MeshShader: visible=%d, threadgroups=%d, meshlets=%d, pipelines=%d",
-          lastVisibleCount, lastDispatchedThreadgroups, currentMeshletCount,
+          visible, threadgroups, meshlets,
           MeshShaderNative.getActivePipelineCount());
     }
   }
+
   public void shutdown() {
     for (int i = 0; i < 3; i++) {
-      if (terrainPipelineHandles[i] != 0) {
-        MeshShaderNative.destroyMeshPipeline(terrainPipelineHandles[i]);
-        terrainPipelineHandles[i] = 0;
+      if (pipelines[i] != 0) {
+        MeshShaderNative.destroyMeshPipeline(pipelines[i]);
+        pipelines[i] = 0;
       }
     }
     if (fallbackPipelineHandle != 0) {
@@ -141,19 +151,24 @@ public class MeshShaderBackend {
     active = false;
     gpuDrivenEnabled = false;
   }
+
   public boolean isActive() {
     return active;
   }
+
   public boolean areMeshShadersAvailable() {
     return meshShadersAvailable;
   }
+
   public boolean isGPUDrivenEnabled() {
     return gpuDrivenEnabled;
   }
-  public int getLastVisibleCount() {
-    return lastVisibleCount;
+
+  public int getVisible() {
+    return visible;
   }
-  public int getCurrentMeshletCount() {
-    return currentMeshletCount;
+
+  public int getMeshlets() {
+    return meshlets;
   }
 }

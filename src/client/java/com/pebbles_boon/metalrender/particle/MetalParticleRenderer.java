@@ -8,24 +8,23 @@ import com.pebbles_boon.metalrender.render.MetalWorldRenderer;
 import com.pebbles_boon.metalrender.sodium.mixins.accessor.BillboardParticleAccessor;
 import com.pebbles_boon.metalrender.sodium.mixins.accessor.ParticleAccessor;
 import com.pebbles_boon.metalrender.util.MetalLogger;
+import com.mojang.blaze3d.opengl.GlTexture;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.Queue;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.particle.BillboardParticle;
+import net.minecraft.client.Camera;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.particle.Particle;
-import net.minecraft.client.particle.ParticleManager;
-import net.minecraft.client.particle.ParticleRenderer;
-import net.minecraft.client.particle.ParticleTextureSheet;
-import net.minecraft.client.render.Camera;
-import net.minecraft.client.texture.AbstractTexture;
-import net.minecraft.client.texture.GlTexture;
-import net.minecraft.client.texture.Sprite;
-import net.minecraft.client.world.ClientWorld;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.MathHelper;
+import net.minecraft.client.particle.ParticleEngine;
+import net.minecraft.client.particle.SingleQuadParticle;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.renderer.texture.AbstractTexture;
+import net.minecraft.client.renderer.texture.TextureAtlasSprite;
+import net.minecraft.core.BlockPos;
+import net.minecraft.resources.Identifier;
+import net.minecraft.util.Mth;
+import net.minecraft.world.level.LightLayer;
 import org.joml.Matrix4f;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
@@ -36,22 +35,20 @@ public class MetalParticleRenderer {
   private static final int VERTEX_STRIDE = 32;
   private static final int MAX_PARTICLE_VERTICES = 65536 * 6;
   private static final int MAX_PARTICLES_PER_FRAME = 65536;
-  private long deviceHandle;
+  private long device;
   private boolean active;
   private int frameCount;
   private ByteBuffer vertexStagingBuffer;
-  private long[] metalVertexBuffers = new long[3];
-  private int currentVertexCount;
+  private long[] vbufs = new long[3];
+  private int vtxCount;
 
   private long cachedParticlePipeline = 0;
   private long cachedParticleFallbackPipeline = 0;
   private final ArrayList<ParticleDrawCommand> pendingDrawPool = new ArrayList<>();
   private int pendingDrawCount;
 
-
-
   private final ArrayList<CapturedParticle> capturedParticlePool = new ArrayList<>();
-  private int capturedParticleCount = 0;
+  private int count = 0;
   private static final int TEXTURE_CACHE_SIZE = 2048;
   private static final long TEXTURE_UNCACHED = Long.MIN_VALUE;
   private final long[] textureCache = new long[TEXTURE_CACHE_SIZE];
@@ -66,8 +63,6 @@ public class MetalParticleRenderer {
   private ByteBuffer textureReadbackBuf = null;
   private byte[] texturePixelBuf = null;
 
-
-
   private static final float[][] CORNER_OFFSETS = {
       { -1.0f, -1.0f, 0.0f },
       { 1.0f, -1.0f, 0.0f },
@@ -78,22 +73,22 @@ public class MetalParticleRenderer {
   private final Vector3f[] bbCorners = { new Vector3f(), new Vector3f(), new Vector3f(), new Vector3f() };
   private final Vector3f bbNormal = new Vector3f();
 
-  private final BlockPos.Mutable reusableBlockPos = new BlockPos.Mutable();
+  private final BlockPos.MutableBlockPos scratchPos = new BlockPos.MutableBlockPos();
 
   public MetalParticleRenderer() {
     vertexStagingBuffer = ByteBuffer.allocateDirect(MAX_PARTICLE_VERTICES * VERTEX_STRIDE)
         .order(ByteOrder.nativeOrder());
   }
 
-  public void setDeviceAndPipeline(long device) {
-    this.deviceHandle = device;
+  public void setup(long device) {
+    this.device = device;
     if (device != 0) {
       for (int i = 0; i < 3; i++) {
-        metalVertexBuffers[i] = NativeBridge.nCreateBuffer(
+        vbufs[i] = NativeBridge.nCreateBuffer(
             device, MAX_PARTICLE_VERTICES * VERTEX_STRIDE, 0);
       }
       MetalLogger.info("MetalParticleRenderer initialized: device=%d vb0=%d vb1=%d vb2=%d",
-          device, metalVertexBuffers[0], metalVertexBuffers[1], metalVertexBuffers[2]);
+          device, vbufs[0], vbufs[1], vbufs[2]);
     }
   }
 
@@ -105,13 +100,13 @@ public class MetalParticleRenderer {
     return active;
   }
 
-  public void captureParticles(ParticleManager particleManager, Camera camera,
-      float tickDelta) {
+  public void capture(ParticleEngine engine, Camera camera,
+      float delta) {
     if (!active)
       return;
-    capturedParticleCount = 0;
+    count = 0;
     try {
-      captureFromManager(particleManager, camera, tickDelta);
+      collect(engine, camera, delta);
     } catch (Exception e) {
       if (frameCount < 5) {
         MetalLogger.error("Failed to capture particles: %s", e.getMessage());
@@ -121,57 +116,39 @@ public class MetalParticleRenderer {
   }
 
   public void captureParticleList(Queue<? extends Particle> particles,
-      Camera camera, float tickDelta) {
+      Camera camera, float delta) {
     if (!active || particles == null)
       return;
-    double camX = camera.getCameraPos().x;
-    double camY = camera.getCameraPos().y;
-    double camZ = camera.getCameraPos().z;
+    double camX = camera.position().x;
+    double camY = camera.position().y;
+    double camZ = camera.position().z;
 
-    boolean cameraInWater = false;
-    ClientWorld world = null;
-    MinecraftClient mc = MinecraftClient.getInstance();
-    if (mc != null && mc.world != null) {
-      world = mc.world;
-      reusableBlockPos.set(
-          (int) Math.floor(camera.getCameraPos().x),
-          (int) Math.floor(camera.getCameraPos().y),
-          (int) Math.floor(camera.getCameraPos().z));
-      cameraInWater = !mc.world.getBlockState(reusableBlockPos).getFluidState().isEmpty();
+    boolean inWater = false;
+    ClientLevel world = null;
+    int camLight = 0x00F000F0;
+    Minecraft mc = Minecraft.getInstance();
+    if (mc != null && mc.level != null) {
+      world = mc.level;
+      scratchPos.set(
+          (int) Math.floor(camera.position().x),
+          (int) Math.floor(camera.position().y),
+          (int) Math.floor(camera.position().z));
+      inWater = !mc.level.getBlockState(scratchPos).getFluidState().isEmpty();
+      var lights = world.getChunkSource().getLightEngine();
+      int blockLev = lights.getLayerListener(LightLayer.BLOCK).getLightValue(scratchPos);
+      int skyLev = lights.getLayerListener(LightLayer.SKY).getLightValue(scratchPos);
+      camLight = ((skyLev * 16) << 16) | (blockLev * 16);
     }
     int captured = 0;
     for (Particle p : particles) {
-      if (capturedParticleCount >= MAX_PARTICLES_PER_FRAME)
+      if (count >= MAX_PARTICLES_PER_FRAME)
         break;
       if (p == null || !p.isAlive())
         continue;
-      if (!(p instanceof BillboardParticle bp))
+      if (!(p instanceof SingleQuadParticle bp))
         continue;
 
-      if (!cameraInWater && world != null) {
-        ParticleAccessor pa2 = (ParticleAccessor) p;
-        double px = pa2.metalrender$getX();
-        double py = pa2.metalrender$getY();
-        double pz = pa2.metalrender$getZ();
-
-        boolean nearWater = false;
-        for (int dy = 0; dy >= -4; dy--) {
-          reusableBlockPos.set(
-              (int) Math.floor(px),
-              (int) Math.floor(py + dy),
-              (int) Math.floor(pz));
-          if (!world.getBlockState(reusableBlockPos).getFluidState().isEmpty()) {
-            nearWater = true;
-            break;
-          }
-        }
-        if (nearWater) {
-
-          continue;
-        }
-      }
-
-      if (cameraInWater) {
+      if (inWater) {
         int hash = System.identityHashCode(p);
         if ((hash & 7) > 1) {
           continue;
@@ -179,47 +156,44 @@ public class MetalParticleRenderer {
       }
       captured++;
       CapturedParticle cp;
-      if (capturedParticleCount < capturedParticlePool.size()) {
-        cp = capturedParticlePool.get(capturedParticleCount);
+      if (count < capturedParticlePool.size()) {
+        cp = capturedParticlePool.get(count);
       } else {
         cp = new CapturedParticle();
         capturedParticlePool.add(cp);
       }
-      capturedParticleCount++;
+      count++;
       ParticleAccessor pa = (ParticleAccessor) p;
       BillboardParticleAccessor bpa = (BillboardParticleAccessor) bp;
-      cp.x = (float) (MathHelper.lerp(tickDelta, pa.metalrender$getLastX(),
+      cp.x = (float) (Mth.lerp(delta, pa.metalrender$getLastX(),
           pa.metalrender$getX()) -
           camX);
-      cp.y = (float) (MathHelper.lerp(tickDelta, pa.metalrender$getLastY(),
+      cp.y = (float) (Mth.lerp(delta, pa.metalrender$getLastY(),
           pa.metalrender$getY()) -
           camY);
-      cp.z = (float) (MathHelper.lerp(tickDelta, pa.metalrender$getLastZ(),
+      cp.z = (float) (Mth.lerp(delta, pa.metalrender$getLastZ(),
           pa.metalrender$getZ()) -
           camZ);
-      cp.scale = bp.getSize(tickDelta);
+      cp.scale = bp.getQuadSize(delta);
 
-      if (cameraInWater) {
+      if (inWater) {
         cp.scale *= 0.5f;
       }
       cp.red = bpa.metalrender$getRed();
       cp.green = bpa.metalrender$getGreen();
       cp.blue = bpa.metalrender$getBlue();
       cp.alpha = bpa.metalrender$getAlpha();
-      cp.zRotation = MathHelper.lerp(tickDelta, bpa.metalrender$getLastZRotation(),
+      cp.zRotation = Mth.lerp(delta, bpa.metalrender$getLastZRotation(),
           bpa.metalrender$getZRotation());
-      Sprite sprite = bpa.metalrender$getSprite();
+      TextureAtlasSprite sprite = bpa.metalrender$getSprite();
       if (sprite != null) {
-
-
-
 
         cp.minU = bpa.metalrender$invokeGetMinU();
         cp.maxU = bpa.metalrender$invokeGetMaxU();
         cp.minV = bpa.metalrender$invokeGetMinV();
         cp.maxV = bpa.metalrender$invokeGetMaxV();
-        if (sprite.getAtlasId() != null) {
-          cp.atlasId = sprite.getAtlasId();
+        if (sprite.atlasLocation() != null) {
+          cp.atlasId = sprite.atlasLocation();
         }
       } else {
         cp.minU = 0;
@@ -228,24 +202,13 @@ public class MetalParticleRenderer {
         cp.maxV = 1;
       }
 
-
-      if (world != null) {
-        int wpX = (int) Math.floor(pa.metalrender$getX());
-        int wpY = (int) Math.floor(pa.metalrender$getY());
-        int wpZ = (int) Math.floor(pa.metalrender$getZ());
-        reusableBlockPos.set(wpX, wpY, wpZ);
-        int blockLev = world.getLightLevel(net.minecraft.world.LightType.BLOCK, reusableBlockPos);
-        int skyLev = world.getLightLevel(net.minecraft.world.LightType.SKY, reusableBlockPos);
-        cp.light = ((skyLev * 16) << 16) | (blockLev * 16);
-      } else {
-        cp.light = 0x00F000F0;
-      }
+      cp.light = camLight;
     }
     if (frameCount < 5 && captured > 0) {
       MetalLogger.info("Captured %d billboard particles from queue", captured);
 
       int logged = 0;
-      for (int _di = 0; _di < capturedParticleCount; _di++) {
+      for (int _di = 0; _di < count; _di++) {
         CapturedParticle dbg = capturedParticlePool.get(_di);
         if (logged >= 5)
           break;
@@ -256,26 +219,26 @@ public class MetalParticleRenderer {
     }
   }
 
-  private void captureFromManager(ParticleManager manager, Camera camera,
-      float tickDelta) {
+  private void collect(ParticleEngine manager, Camera camera,
+      float delta) {
   }
 
-  public void renderCapturedParticles(long frameContext) {
-    if (!active || frameContext == 0 || deviceHandle == 0)
+  public void render(long ctx) {
+    if (!active || ctx == 0 || device == 0)
       return;
-    if (capturedParticleCount == 0) {
+    if (count == 0) {
       frameCount++;
       return;
     }
     buildParticleGeometry();
-    if (currentVertexCount == 0 || pendingDrawCount == 0) {
-      capturedParticleCount = 0;
+    if (vtxCount == 0 || pendingDrawCount == 0) {
+      count = 0;
       frameCount++;
       return;
     }
     vertexStagingBuffer.flip();
-    int uploadSize = currentVertexCount * VERTEX_STRIDE;
-    long activeVB = metalVertexBuffers[frameCount % 3];
+    int uploadSize = vtxCount * VERTEX_STRIDE;
+    long activeVB = vbufs[frameCount % 3];
     if (activeVB != 0 && uploadSize > 0) {
       NativeBridge.nUploadBufferDataDirect(activeVB, vertexStagingBuffer, 0, uploadSize);
     }
@@ -306,16 +269,15 @@ public class MetalParticleRenderer {
       frameCount++;
       return;
     }
-    NativeBridge.nSetPipelineState(frameContext, particlePipeline);
-    NativeBridge.nSetChunkOffset(frameContext, 0.0f, 0.0f, 0.0f);
-    NativeBridge.nSetEntityOverlay(frameContext, 0.0f, 0.0f, 1.0f);
-
+    NativeBridge.nSetPipelineState(ctx, particlePipeline);
+    NativeBridge.nSetChunkOffset(ctx, 0.0f, 0.0f, 0.0f);
+    NativeBridge.nSetEntityOverlay(ctx, 0.0f, 0.0f, 1.0f);
 
     MetalWorldRenderer wr = MetalRenderClient.getWorldRenderer();
     long fallbackBlockAtlas = (wr != null) ? wr.getTextureManager().getBlockAtlasTexture() : 0;
     long lastBoundTex = 0;
     if (fallbackBlockAtlas != 0) {
-      NativeBridge.nBindEntityTexture(frameContext, fallbackBlockAtlas);
+      NativeBridge.nBindEntityTexture(ctx, fallbackBlockAtlas);
       lastBoundTex = fallbackBlockAtlas;
     }
     int drawsDone = 0;
@@ -326,14 +288,14 @@ public class MetalParticleRenderer {
       if (cmd.glTextureId != 0) {
         long metalTex = getOrCreateMetalTexture(cmd.glTextureId);
         if (metalTex != 0 && metalTex != lastBoundTex) {
-          NativeBridge.nBindEntityTexture(frameContext, metalTex);
+          NativeBridge.nBindEntityTexture(ctx, metalTex);
           lastBoundTex = metalTex;
         }
       } else if (fallbackBlockAtlas != 0 && lastBoundTex != fallbackBlockAtlas) {
-        NativeBridge.nBindEntityTexture(frameContext, fallbackBlockAtlas);
+        NativeBridge.nBindEntityTexture(ctx, fallbackBlockAtlas);
         lastBoundTex = fallbackBlockAtlas;
       }
-      NativeBridge.nDrawEntityBuffer(frameContext, activeVB,
+      NativeBridge.nDrawEntityBuffer(ctx, activeVB,
           cmd.vertexCount, cmd.startVertex,
           0x8);
       drawsDone++;
@@ -342,33 +304,32 @@ public class MetalParticleRenderer {
     if (frameCount <= 5 || frameCount % 3000 == 0) {
       MetalLogger.info(
           "MetalParticleRenderer: frame %d, %d particles, %d verts, %d draws",
-          frameCount, capturedParticleCount, currentVertexCount, drawsDone);
+          frameCount, count, vtxCount, drawsDone);
     }
     pendingDrawCount = 0;
 
-
-    for (int i = 0; i < capturedParticleCount; i++)
+    for (int i = 0; i < count; i++)
       capturedParticlePool.get(i).atlasId = null;
-    capturedParticleCount = 0;
+    count = 0;
   }
 
   private void buildParticleGeometry() {
     vertexStagingBuffer.clear();
-    currentVertexCount = 0;
+    vtxCount = 0;
     pendingDrawCount = 0;
-    MinecraftClient client = MinecraftClient.getInstance();
-    if (client == null)
+    Minecraft mc = Minecraft.getInstance();
+    if (mc == null)
       return;
-    Camera camera = client.gameRenderer.getCamera();
+    Camera camera = mc.gameRenderer.getMainCamera();
     if (camera == null)
       return;
-    Quaternionf camRot = camera.getRotation();
+    Quaternionf camRot = camera.rotation();
     int currentGlTexId = -1;
     int batchStartVertex = 0;
     int batchVertexCount = 0;
-    for (int _pi = 0; _pi < capturedParticleCount; _pi++) {
+    for (int _pi = 0; _pi < count; _pi++) {
       CapturedParticle cp = capturedParticlePool.get(_pi);
-      if (currentVertexCount + 6 > MAX_PARTICLE_VERTICES)
+      if (vtxCount + 6 > MAX_PARTICLE_VERTICES)
         break;
       int glTexId = 0;
       if (cp.atlasId != null) {
@@ -386,7 +347,7 @@ public class MetalParticleRenderer {
         cmd.vertexCount = batchVertexCount;
         cmd.glTextureId = currentGlTexId;
         pendingDrawCount++;
-        batchStartVertex = currentVertexCount;
+        batchStartVertex = vtxCount;
         batchVertexCount = 0;
       }
       currentGlTexId = glTexId;
@@ -406,9 +367,9 @@ public class MetalParticleRenderer {
       cmd.glTextureId = currentGlTexId;
       pendingDrawCount++;
     }
-    if (frameCount < 5 && currentVertexCount > 0) {
+    if (frameCount < 5 && vtxCount > 0) {
       MetalLogger.info("Built %d particle verts in %d draw batches",
-          currentVertexCount, pendingDrawCount);
+          vtxCount, pendingDrawCount);
     }
   }
 
@@ -420,9 +381,6 @@ public class MetalParticleRenderer {
     if (cp.zRotation != 0.0f) {
       bbRot.rotateZ(cp.zRotation);
     }
-
-
-
 
     for (int i = 0; i < 4; i++) {
       Vector3f c = bbCorners[i];
@@ -455,7 +413,7 @@ public class MetalParticleRenderer {
   private void writeParticleVertex(float px, float py, float pz, float u,
       float v, int color, float nx, float ny,
       float nz, int light) {
-    if (currentVertexCount >= MAX_PARTICLE_VERTICES ||
+    if (vtxCount >= MAX_PARTICLE_VERTICES ||
         vertexStagingBuffer.remaining() < VERTEX_STRIDE)
       return;
     vertexStagingBuffer.putFloat(px);
@@ -480,18 +438,15 @@ public class MetalParticleRenderer {
     vertexStagingBuffer.putShort((short) 0);
     vertexStagingBuffer.putShort((short) 0);
 
-
-
-
     int blockL = light & 0xFFFF;
     int skyL = (light >> 16) & 0xFFFF;
     vertexStagingBuffer.putShort((short) blockL);
     vertexStagingBuffer.putShort((short) skyL);
-    currentVertexCount++;
+    vtxCount++;
   }
 
   private long getOrCreateMetalTexture(int glTextureId) {
-    if (glTextureId == 0 || deviceHandle == 0)
+    if (glTextureId == 0 || device == 0)
       return 0;
     boolean inBounds = glTextureId >= 0 && glTextureId < TEXTURE_CACHE_SIZE;
     int lastUpload = inBounds ? textureUploadFrame[glTextureId] : -1;
@@ -534,7 +489,7 @@ public class MetalParticleRenderer {
           textureUploadFrame[glTextureId] = frameCount;
         return cached;
       }
-      long metalTex = NativeBridge.nCreateTexture2D(deviceHandle, width, height, pixelData);
+      long metalTex = NativeBridge.nCreateTexture2D(device, width, height, pixelData);
       if (inBounds) {
         textureCache[glTextureId] = metalTex;
         textureUploadFrame[glTextureId] = frameCount;
@@ -556,15 +511,15 @@ public class MetalParticleRenderer {
 
   private int getGlTextureIdForAtlas(Identifier atlasId) {
     try {
-      MinecraftClient client = MinecraftClient.getInstance();
-      if (client == null)
+      Minecraft mc = Minecraft.getInstance();
+      if (mc == null)
         return 0;
-      AbstractTexture tex = client.getTextureManager().getTexture(atlasId);
+      AbstractTexture tex = mc.getTextureManager().getTexture(atlasId);
       if (tex == null)
         return 0;
-      com.mojang.blaze3d.textures.GpuTexture gpuTex = tex.getGlTexture();
+      var gpuTex = tex.getTexture();
       if (gpuTex instanceof GlTexture glTex) {
-        return glTex.getGlId();
+        return glTex.glId();
       }
     } catch (Exception e) {
     }
@@ -583,11 +538,11 @@ public class MetalParticleRenderer {
   }
 
   public int getLastParticleCount() {
-    return capturedParticleCount;
+    return count;
   }
 
   public int getLastVertexCount() {
-    return currentVertexCount;
+    return vtxCount;
   }
 
   public void shutdown() {
@@ -596,9 +551,9 @@ public class MetalParticleRenderer {
     cachedParticleFallbackPipeline = 0;
     textureReadbackBuf = null;
     texturePixelBuf = null;
-    for (int i = 0; i < capturedParticleCount; i++)
+    for (int i = 0; i < count; i++)
       capturedParticlePool.get(i).atlasId = null;
-    capturedParticleCount = 0;
+    count = 0;
     for (int _ti = 0; _ti < TEXTURE_CACHE_SIZE; _ti++) {
       long h = textureCache[_ti];
       if (h > 0)
@@ -607,12 +562,12 @@ public class MetalParticleRenderer {
     java.util.Arrays.fill(textureCache, TEXTURE_UNCACHED);
     java.util.Arrays.fill(textureUploadFrame, -1);
     for (int i = 0; i < 3; i++) {
-      if (metalVertexBuffers[i] != 0) {
-        NativeBridge.nDestroyBuffer(metalVertexBuffers[i]);
-        metalVertexBuffers[i] = 0;
+      if (vbufs[i] != 0) {
+        NativeBridge.nDestroyBuffer(vbufs[i]);
+        vbufs[i] = 0;
       }
     }
-    deviceHandle = 0;
+    device = 0;
     MetalLogger.info("MetalParticleRenderer shut down");
   }
 

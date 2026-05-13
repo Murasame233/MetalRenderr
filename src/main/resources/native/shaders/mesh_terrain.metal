@@ -1,17 +1,6 @@
-
-
-
-
-
-
-
-
-
-
 #include <metal_stdlib>
 #include <metal_mesh>
 using namespace metal;
-
 
 struct CameraUniforms {
     float4x4 viewProjection;
@@ -28,7 +17,6 @@ struct CameraUniforms {
     float    waterFog;
 };
 
-
 struct ChunkMeshlet {
     uint  baseVertexOffset;
     uint  vertexCount;
@@ -40,7 +28,6 @@ struct ChunkMeshlet {
     uint  _pad1;
 };
 
-
 struct InhouseTerrainVertex {
     packed_short3  position;
     packed_ushort2 texCoord;
@@ -49,27 +36,24 @@ struct InhouseTerrainVertex {
     uchar          normalIndex;
 };
 
-
-
 constant float kGamma[16] = {
     0.0f,
-    0.38157f,
-    0.47038f,
-    0.53589f,
-    0.59018f,
-    0.63728f,
-    0.65132f,
-    0.69210f,
-    0.72984f,
-    0.76496f,
-    0.79780f,
-    0.82860f,
-    0.85752f,
-    0.88474f,
-    0.91038f,
+    0.06833f,
+    0.14013f,
+    0.21532f,
+    0.29393f,
+    0.37571f,
+    0.46023f,
+    0.54675f,
+    0.63405f,
+    0.72025f,
+    0.80247f,
+    0.87669f,
+    0.93750f,
+    0.97894f,
+    0.99756f,
     1.00000f,
 };
-
 
 constant half kFaceShade[6] = {
     half(0.5),
@@ -80,7 +64,6 @@ constant half kFaceShade[6] = {
     half(0.6),
 };
 
-
 struct MeshVertexOut {
     float4 position    [[position]];
     float2 texCoord;
@@ -90,17 +73,9 @@ struct MeshVertexOut {
     float3 worldPos;
 };
 
-
 struct MeshletPayload {
     uint chunkIndex;
 };
-
-
-
-
-
-
-
 
 [[object, max_total_threads_per_threadgroup(1)]]
 void object_terrain(
@@ -137,14 +112,6 @@ void object_terrain(
     uint numGroups = (m.vertexCount + 255u) / 256u;
     grid.set_threadgroups_per_grid(uint3(numGroups, 1, 1));
 }
-
-
-
-
-
-
-
-
 
 constant uint kMaxMeshVerts = 256u;
 constant uint kMaxMeshTris  = 128u;
@@ -219,7 +186,7 @@ fragment half4 fragment_terrain_mesh_opaque(
     constant CameraUniforms& camera [[buffer(1)]]
 ) {
     constexpr sampler s(mag_filter::nearest, min_filter::nearest,
-                        mip_filter::nearest);
+                        mip_filter::none);
     half4 tex = blockAtlas.sample(s, float2(in.texCoord));
     half  va  = in.color.a;
 
@@ -250,7 +217,7 @@ fragment half4 fragment_terrain_mesh_cutout(
     constant CameraUniforms& camera [[buffer(1)]]
 ) {
     constexpr sampler s(mag_filter::nearest, min_filter::nearest,
-                        mip_filter::nearest);
+                        mip_filter::none);
     half4 tex = blockAtlas.sample(s, float2(in.texCoord));
     if (tex.a < half(0.5h)) discard_fragment();
     half4 col = tex * in.color;
@@ -269,7 +236,7 @@ fragment half4 fragment_terrain_mesh_emissive(
     constant CameraUniforms& camera [[buffer(1)]]
 ) {
     constexpr sampler s(mag_filter::nearest, min_filter::nearest,
-                        mip_filter::nearest);
+                        mip_filter::none);
     half4 tex = blockAtlas.sample(s, float2(in.texCoord));
     if (tex.a < half(0.1h)) discard_fragment();
     half4 col = tex * in.color;

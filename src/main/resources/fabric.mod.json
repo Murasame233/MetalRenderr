@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "metalrender",
-  "version":"0.1.7",
+  "version": "0.1.7",
   "license": "Apache-2.0",
   "authors": [
     "pebbles_boon"
@@ -18,8 +18,8 @@
     "metalrender.mixins.json"
   ],
   "depends": {
-    "fabricloader": ">=0.17.1",
-    "minecraft": ">=1.21.11",
-    "fabric": "*"
+    "fabricloader": ">=0.18.2",
+    "minecraft": ">=26.1",
+    "fabric-api": "*"
   }
 }

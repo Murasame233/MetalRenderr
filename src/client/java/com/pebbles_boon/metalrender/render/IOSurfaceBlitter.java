@@ -54,8 +54,6 @@ public final class IOSurfaceBlitter {
   private byte[] depthRowB = null;
   private final float[] prevClearColor = new float[4];
 
-
-
   private int cachedPrevReadFbo = -1;
   private int cachedPrevDrawFbo = -1;
   private boolean cachedScissor = false;
@@ -99,8 +97,7 @@ public final class IOSurfaceBlitter {
       uniform sampler2D uTexture;
       void main() {
           vec4 texColor = texture(uTexture, vTexCoord);
-          if (texColor.a < 0.001) discard;
-          fragColor = texColor;
+        fragColor = texColor;
       }
       """;
   private static final String RECT_FRAGMENT_SHADER = """
@@ -112,8 +109,7 @@ public final class IOSurfaceBlitter {
       void main() {
           vec2 rc = vec2(vTexCoord.x * uTexSize.x, (1.0 - vTexCoord.y) * uTexSize.y);
           vec4 texColor = texture(uTextureRect, rc);
-          if (texColor.a < 0.001) discard;
-          fragColor = texColor;
+        fragColor = vec4(texColor.rgb, 1.0);
       }
       """;
   private static final String DEPTH_FRAGMENT_SHADER = """
@@ -308,9 +304,6 @@ public final class IOSurfaceBlitter {
 
   private boolean blitToIntermediateImpl(int width, int height) {
 
-
-
-
     int prevReadFbo, prevDrawFbo;
     boolean scissor;
     if (!glStateQueried) {
@@ -491,9 +484,7 @@ public final class IOSurfaceBlitter {
       GL11.glViewport(0, 0, width, height);
       GL11.glDisable(GL11.GL_DEPTH_TEST);
       GL11.glDepthMask(false);
-      GL11.glEnable(GL11.GL_BLEND);
-      GL14.glBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA,
-          GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
+      GL11.glDisable(GL11.GL_BLEND);
       GL11.glDisable(GL11.GL_CULL_FACE);
       GL11.glDisable(GL11.GL_SCISSOR_TEST);
       GL11.glDisable(GL11.GL_STENCIL_TEST);
@@ -570,8 +561,6 @@ public final class IOSurfaceBlitter {
       GL20.glUseProgram(0);
     }
 
-
-
     int prevProgram, prevVao, prevActiveTexture, prevTex;
     boolean wasDepth, wasBlend, wasCull, wasScissor, wasStencil, wasDepthMask;
     boolean cmR, cmG, cmB, cmA;
@@ -644,8 +633,9 @@ public final class IOSurfaceBlitter {
       GL11.glDisable(GL11.GL_DEPTH_TEST);
       GL11.glDepthMask(false);
       GL11.glEnable(GL11.GL_BLEND);
-      GL14.glBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA,
-          GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
+      GL14.glBlendFuncSeparate(
+          GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA,
+          GL11.GL_ONE, GL11.GL_ZERO);
       GL11.glDisable(GL11.GL_CULL_FACE);
       GL11.glDisable(GL11.GL_SCISSOR_TEST);
       GL11.glDisable(GL11.GL_STENCIL_TEST);

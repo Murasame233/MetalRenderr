@@ -1,5 +1,6 @@
 #include <metal_stdlib>
 using namespace metal;
+
 struct SodiumVertex {
     uint posHi;
     uint posLo;
@@ -7,6 +8,7 @@ struct SodiumVertex {
     uint texture;
     uint lightData;
 };
+
 float3 decodeSodiumPosition(uint posHi, uint posLo) {
     uint xHi = (posHi >>  0) & 0x3FF;
     uint yHi = (posHi >> 10) & 0x3FF;
@@ -19,6 +21,7 @@ float3 decodeSodiumPosition(uint posHi, uint posLo) {
     float z = float((zHi << 10) | zLo) / 1048576.0 * 32.0 - 8.0;
     return float3(x, y, z);
 }
+
 float4 decodeSodiumColor(uint c) {
     float a = float((c >> 24) & 0xFF) / 255.0;
     float r = float((c >> 16) & 0xFF) / 255.0;
@@ -26,17 +29,17 @@ float4 decodeSodiumColor(uint c) {
     float b = float((c >>  0) & 0xFF) / 255.0;
     return float4(r, g, b, a);
 }
+
 float2 decodeSodiumTexCoord(uint tex) {
     float u = float(tex & 0x7FFF) / 32768.0;
     float v = float((tex >> 16) & 0x7FFF) / 32768.0;
     return float2(u, v);
 }
+
 float2 decodeSodiumLight(uint lightData) {
     uint light = lightData & 0xFFFF;
-
-
-    float blockLight = float((light & 0xFF) + 8u) / 256.0;
-    float skyLight   = float(((light >> 8) & 0xFF) + 8u) / 256.0;
+    float blockLight = float(light & 0xFF) / 256.0;
+    float skyLight   = float((light >> 8) & 0xFF) / 256.0;
     return float2(blockLight, skyLight);
 }
 constant half kFaceShade[6] = {
@@ -48,13 +51,23 @@ constant half kFaceShade[6] = {
     half(0.65),
 };
 struct SimpleVertexOut {
-    float4 position  [[position]];
+    float4 position [[position]];
     float2 texCoord;
     half4 color;
     float2 lightUV;
     half  light;
     uint   normalIndex [[flat]];
 };
+
+static inline half3 applyUnderwaterFog(half3 rgb, half fogDist, constant float4& overlayParams) {
+    float waterFog = overlayParams.z;
+    if (waterFog <= 0.0f) {
+        return rgb;
+    }
+    half fogFactor = half(clamp(float(fogDist) / 48.0f, 0.0f, 0.85f) * waterFog);
+    return mix(rgb, half3(0.05h, 0.12h, 0.30h), fogFactor);
+}
+
 vertex SimpleVertexOut vertex_terrain(
     device const SodiumVertex* vertices       [[buffer(0)]],
     constant float4x4& projectionMatrix       [[buffer(1)]],
@@ -78,12 +91,13 @@ vertex SimpleVertexOut vertex_terrain(
     out.normalIndex = (v.lightData >> 16) & 0x7;
     return out;
 }
+
 fragment half4 fragment_terrain(
     SimpleVertexOut in [[stage_in]],
     texture2d<half> blockAtlas  [[texture(0)]],
     texture2d<half> lightmap    [[texture(1)]]
 ) {
-    constexpr sampler texSampler(mag_filter::nearest, min_filter::nearest, mip_filter::nearest);
+    constexpr sampler texSampler(mag_filter::nearest, min_filter::nearest, mip_filter::none);
     half4 texColor = blockAtlas.sample(texSampler, in.texCoord);
     half vertAlpha = in.color.a;
     if (texColor.a < half(0.5)) {
@@ -101,12 +115,36 @@ fragment half4 fragment_terrain(
     tinted.rgb *= light * faceShade;
     return half4(tinted.rgb, vertAlpha < half(0.99) ? vertAlpha : half(1.0));
 }
+
+fragment half4 fragment_water_surface(
+    SimpleVertexOut in [[stage_in]],
+    texture2d<half> blockAtlas  [[texture(0)]],
+    texture2d<half> lightmap    [[texture(1)]]
+) {
+    constexpr sampler atlasSampler(mag_filter::linear, min_filter::linear, mip_filter::none, address::clamp_to_edge);
+    constexpr sampler lightSampler(mag_filter::nearest, min_filter::nearest, mip_filter::nearest, address::clamp_to_edge);
+    half4 texColor = blockAtlas.sample(atlasSampler, in.texCoord);
+    half vertAlpha = in.color.a;
+    if (texColor.a < half(0.5)) {
+        if (vertAlpha > half(0.994) && vertAlpha < half(0.998)) {
+            texColor.a = half(1.0);
+        } else {
+            discard_fragment();
+        }
+    }
+    half4 tinted = texColor * in.color;
+    half faceShade = kFaceShade[min(in.normalIndex, 5u)];
+    half3 light = lightmap.sample(lightSampler, in.lightUV).rgb;
+    tinted.rgb *= light * faceShade;
+    return half4(tinted.rgb, vertAlpha < half(0.99) ? vertAlpha : half(1.0));
+}
+
 fragment half4 fragment_terrain_cutout(
     SimpleVertexOut in [[stage_in]],
     texture2d<half> blockAtlas  [[texture(0)]],
     texture2d<half> lightmap    [[texture(1)]]
 ) {
-    constexpr sampler texSampler(mag_filter::nearest, min_filter::nearest, mip_filter::nearest);
+    constexpr sampler texSampler(mag_filter::nearest, min_filter::nearest, mip_filter::none);
     half4 texColor = blockAtlas.sample(texSampler, in.texCoord);
     if (texColor.a < half(0.5)) discard_fragment();
     half4 tinted = texColor * in.color;
@@ -115,6 +153,7 @@ fragment half4 fragment_terrain_cutout(
     tinted.rgb *= light * faceShade;
     return half4(tinted.rgb, half(1.0));
 }
+
 struct InhouseTerrainVertex {
     packed_short3 position;
     packed_ushort2 texCoord;
@@ -122,12 +161,13 @@ struct InhouseTerrainVertex {
     uchar packedLight;
     uchar normalIndex;
 };
+
 vertex SimpleVertexOut vertex_terrain_inhouse(
-    device const InhouseTerrainVertex* vertices   [[buffer(0)]],
-    constant float4x4& projectionMatrix           [[buffer(1)]],
-    constant float4x4& modelViewMatrix            [[buffer(2)]],
-    constant float4& cameraPosition               [[buffer(3)]],
-    constant float4 *chunkOffsets                  [[buffer(4)]],
+    device const InhouseTerrainVertex* vertices [[buffer(0)]],
+    constant float4x4& projectionMatrix [[buffer(1)]],
+    constant float4x4& modelViewMatrix [[buffer(2)]],
+    constant float4& cameraPosition [[buffer(3)]],
+    constant float4* chunkOffsets [[buffer(4)]],
     uint vid [[vertex_id]],
     uint iid [[instance_id]]
 ) {
@@ -162,6 +202,7 @@ vertex SimpleVertexOut vertex_terrain_inhouse(
     out.normalIndex = uint(v.normalIndex & 0x7);
     return out;
 }
+
 struct TerrainFragArgs {
     texture2d<half> blockAtlas [[id(0)]];
     texture2d<half> lightmap   [[id(1)]];
@@ -179,18 +220,10 @@ fragment half4 fragment_terrain_opaque(
     texture2d<half> blockAtlas  [[texture(0)]],
     texture2d<half> lightmap    [[texture(1)]]
 ) {
-    constexpr sampler texSampler(mag_filter::nearest, min_filter::nearest, mip_filter::nearest);
+    constexpr sampler texSampler(mag_filter::nearest, min_filter::nearest, mip_filter::none);
     half4 texColor = blockAtlas.sample(texSampler, in.texCoord);
-    half vertAlpha = in.color.a;
-    if (texColor.a < half(0.5)) {
-
-
-
-        if (vertAlpha > half(0.994) && vertAlpha < half(0.998)) {
-            texColor.a = half(1.0);
-        } else {
-            discard_fragment();
-        }
+    if (texColor.a < half(0.001)) {
+        texColor.a = half(1.0);
     }
     half4 tinted = texColor * in.color;
     half faceShade = kFaceShade[min(in.normalIndex, 5u)];
@@ -203,16 +236,10 @@ fragment half4 fragment_terrain_icb_opaque(
     SimpleVertexOut in [[stage_in]],
     constant TerrainFragArgs& resources [[buffer(0)]]
 ) {
-    constexpr sampler texSampler(mag_filter::nearest, min_filter::nearest, mip_filter::nearest);
+    constexpr sampler texSampler(mag_filter::nearest, min_filter::nearest, mip_filter::none);
     half4 texColor = resources.blockAtlas.sample(texSampler, in.texCoord);
-    half vertAlpha = in.color.a;
-    if (texColor.a < half(0.5)) {
-
-        if (vertAlpha > half(0.994) && vertAlpha < half(0.998)) {
-            texColor.a = half(1.0);
-        } else {
-            discard_fragment();
-        }
+    if (texColor.a < half(0.001)) {
+        texColor.a = half(1.0);
     }
     half4 tinted = texColor * in.color;
     half faceShade = kFaceShade[min(in.normalIndex, 5u)];
@@ -223,9 +250,10 @@ fragment half4 fragment_terrain_icb_opaque(
 
 fragment half4 fragment_terrain_icb(
     SimpleVertexOut in [[stage_in]],
-    constant TerrainFragArgs& resources [[buffer(0)]]
+    constant TerrainFragArgs& resources [[buffer(0)]],
+    constant float4& overlayParams [[buffer(5)]]
 ) {
-    constexpr sampler texSampler(mag_filter::nearest, min_filter::nearest, mip_filter::nearest);
+    constexpr sampler texSampler(mag_filter::nearest, min_filter::nearest, mip_filter::none);
     half4 texColor = resources.blockAtlas.sample(texSampler, in.texCoord);
     half vertAlpha = in.color.a;
     if (texColor.a < half(0.5)) {
@@ -250,7 +278,7 @@ fragment half4 fragment_terrain_cutout_inhouse(
     texture2d<half> blockAtlas  [[texture(0)]],
     texture2d<half> lightmap    [[texture(1)]]
 ) {
-    constexpr sampler texSampler(mag_filter::nearest, min_filter::nearest, mip_filter::nearest);
+    constexpr sampler texSampler(mag_filter::nearest, min_filter::nearest, mip_filter::none);
     half4 texColor = blockAtlas.sample(texSampler, in.texCoord);
     if (texColor.a < half(0.5)) discard_fragment();
     half4 tinted = texColor * in.color;
@@ -264,7 +292,7 @@ fragment half4 fragment_terrain_icb_cutout(
     SimpleVertexOut in [[stage_in]],
     constant TerrainFragArgs& resources [[buffer(0)]]
 ) {
-    constexpr sampler texSampler(mag_filter::nearest, min_filter::nearest, mip_filter::nearest);
+    constexpr sampler texSampler(mag_filter::nearest, min_filter::nearest, mip_filter::none);
     half4 texColor = resources.blockAtlas.sample(texSampler, in.texCoord);
     if (texColor.a < half(0.5)) discard_fragment();
     half4 tinted = texColor * in.color;
@@ -278,11 +306,12 @@ struct DebugVertexOut {
     float4 position [[position]];
     float4 color;
 };
+
 vertex DebugVertexOut vertex_debug(
-    device const packed_float3* positions     [[buffer(0)]],
-    constant float4x4& projectionMatrix       [[buffer(1)]],
-    constant float4x4& modelViewMatrix        [[buffer(2)]],
-    constant float4& debugColor               [[buffer(5)]],
+    device const packed_float3* positions [[buffer(0)]],
+    constant float4x4& projectionMatrix [[buffer(1)]],
+    constant float4x4& modelViewMatrix [[buffer(2)]],
+    constant float4& debugColor [[buffer(5)]],
     uint vid [[vertex_id]]
 ) {
     DebugVertexOut out;
@@ -291,6 +320,7 @@ vertex DebugVertexOut vertex_debug(
     out.color = debugColor;
     return out;
 }
+
 fragment float4 fragment_debug(DebugVertexOut in [[stage_in]]) {
     return in.color;
 }

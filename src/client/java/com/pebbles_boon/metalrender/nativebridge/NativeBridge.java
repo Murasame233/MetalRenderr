@@ -204,7 +204,6 @@ public final class NativeBridge {
 
         public static native int nGetThermalLODReduction();
 
-
         public static native void nSetRenderDistance(int distanceBlocks);
 
         public static native long nGetAvailableMemory();
@@ -215,6 +214,12 @@ public final class NativeBridge {
 
         public static native boolean nAreMeshShadersActive();
 
+        public static native boolean nAreArgumentBuffersActive();
+
+        public static native boolean nAreMemorylessTargetsActive();
+
+        public static native boolean nIsMegaBufferActive();
+
         public static native void nRegisterChunkMesh(int cx, int cy, int cz,
                         long bufferHandle, int quadCount, int opaqueQuadCount, int lodLevel);
 
@@ -223,30 +228,18 @@ public final class NativeBridge {
         public static native int nDrawAllVisibleChunks(long frameContext,
                         long indexBuffer);
 
-
-
-
-
-
-
         public static native int nBatchPackFaces(long outBufferAddr, int outOffset,
                         java.nio.ByteBuffer faceData, int faceCount);
 
-
         public static native void nWatchdogReset();
-
 
         public static native void nFlushFrames();
 
-
         public static native void nClearAllChunkRegistrations();
-
 
         public static native void nFlushDeferredDeletions();
 
-
         public static native int nMegaDefragment();
-
 
         public static native void nSetFeatureFlags(
                         boolean enableIndirectCommandBuffers,
@@ -255,6 +248,7 @@ public final class NativeBridge {
                         boolean enableProgrammableBlending,
                         boolean enableMemorylessTargets);
 
+        public static native void nDrawDeferredWaterPass(long frameContext);
 
         public static native void nDrawOITPass(long frameContext);
 }

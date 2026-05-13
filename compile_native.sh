@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 echo "Compiling shaders..."
 SHADER_DIR="src/main/resources/native/shaders"
@@ -38,7 +38,7 @@ xcrun -sdk macosx metallib \
 echo "Shaders compiled to src/main/resources/shaders.metallib"
 
 echo "Compiling native library..."
-JAVA_HOME=$(/usr/libexec/java_home)
+JAVA_HOME="${JAVA_HOME:-$(/usr/libexec/java_home -v 25)}"
 echo "Using JAVA_HOME: $JAVA_HOME"
 
 clang++ -O3 -std=c++17 -dynamiclib \
@@ -50,7 +50,11 @@ clang++ -O3 -std=c++17 -dynamiclib \
     src/main/resources/native/meshshader.mm \
     -o src/main/resources/libmetalrender_debug_v2.dylib
 
+/usr/bin/codesign --force --sign - --timestamp=none src/main/resources/libmetalrender_debug_v2.dylib
+
 cp src/main/resources/libmetalrender_debug_v2.dylib src/main/resources/libmetalrender.dylib
+
+/usr/bin/codesign --force --sign - --timestamp=none src/main/resources/libmetalrender.dylib
 
 echo "Native library compiled to src/main/resources/libmetalrender_debug_v2.dylib"
 echo "Copied to src/main/resources/libmetalrender.dylib"

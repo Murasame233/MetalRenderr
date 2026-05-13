@@ -27,7 +27,7 @@ public class MetalLogger {
   }
 
   public static void error(String msg, Object... args) {
-    LOGGER.error("[ErrorWender] {}", format(msg, args));
+    LOGGER.error("[MetalRender] {}", format(msg, args));
   }
 
   public static void debugInfo(String msg, Object... args) {

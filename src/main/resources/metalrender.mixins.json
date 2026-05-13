@@ -8,6 +8,7 @@
   "client": [
     "MinecraftClientMixin",
     "GameRendererMixin",
+    "DebugScreenOverlayTextColorMixin",
     "DrawContextMixin",
     "RenderSystemFlipMixin",
     "WindowSwapMixin",
@@ -18,6 +19,7 @@
     "accessor.GameRendererAccessor",
     "sodiumhook.SodiumWorldRendererMixin_CM",
     "WorldRendererTerrainMixin",
+    "BlockEntityRenderMixin",
     "EntityRenderMixin",
     "ParticleCaptureMixin",
     "WorldRendererBlitMixin",

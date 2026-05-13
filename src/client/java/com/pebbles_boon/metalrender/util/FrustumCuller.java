@@ -1,5 +1,6 @@
 package com.pebbles_boon.metalrender.util;
 import org.joml.Matrix4f;
+
 public class FrustumCuller {
   public enum MovementState {
     STANDING, WALKING, FLYING
