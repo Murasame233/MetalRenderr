@@ -4,6 +4,7 @@ import com.pebbles_boon.metalrender.MetalRenderClient;
 import com.pebbles_boon.metalrender.backend.MetalRenderer;
 import com.pebbles_boon.metalrender.nativebridge.NativeBridge;
 import com.pebbles_boon.metalrender.render.CapturedMatrices;
+import com.pebbles_boon.metalrender.render.MetalTextureManager;
 import com.pebbles_boon.metalrender.render.MetalWorldRenderer;
 import com.pebbles_boon.metalrender.sodium.mixins.accessor.BillboardParticleAccessor;
 import com.pebbles_boon.metalrender.sodium.mixins.accessor.ParticleAccessor;
@@ -20,6 +21,7 @@ import net.minecraft.client.particle.ParticleEngine;
 import net.minecraft.client.particle.SingleQuadParticle;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.texture.AbstractTexture;
+import net.minecraft.client.renderer.texture.TextureAtlas;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.Identifier;
@@ -58,7 +60,7 @@ public class MetalParticleRenderer {
     java.util.Arrays.fill(textureUploadFrame, -1);
   }
 
-  private static final int ATLAS_REFRESH_FRAMES = 120;
+  private static final int ATLAS_REFRESH_FRAMES = 1200;
 
   private ByteBuffer textureReadbackBuf = null;
   private byte[] texturePixelBuf = null;
@@ -286,7 +288,7 @@ public class MetalParticleRenderer {
       if (cmd.vertexCount <= 0)
         continue;
       if (cmd.glTextureId != 0) {
-        long metalTex = getOrCreateMetalTexture(cmd.glTextureId);
+        long metalTex = getOrCreateMetalTexture(cmd.glTextureId, cmd.atlasId);
         if (metalTex != 0 && metalTex != lastBoundTex) {
           NativeBridge.nBindEntityTexture(ctx, metalTex);
           lastBoundTex = metalTex;
@@ -325,6 +327,7 @@ public class MetalParticleRenderer {
       return;
     Quaternionf camRot = camera.rotation();
     int currentGlTexId = -1;
+    Identifier currentAtlasId = null;
     int batchStartVertex = 0;
     int batchVertexCount = 0;
     for (int _pi = 0; _pi < count; _pi++) {
@@ -346,11 +349,13 @@ public class MetalParticleRenderer {
         cmd.startVertex = batchStartVertex;
         cmd.vertexCount = batchVertexCount;
         cmd.glTextureId = currentGlTexId;
+        cmd.atlasId = currentAtlasId;
         pendingDrawCount++;
         batchStartVertex = vtxCount;
         batchVertexCount = 0;
       }
       currentGlTexId = glTexId;
+      currentAtlasId = cp.atlasId;
       buildBillboardQuad(cp, camRot);
       batchVertexCount += 6;
     }
@@ -365,6 +370,7 @@ public class MetalParticleRenderer {
       cmd.startVertex = batchStartVertex;
       cmd.vertexCount = batchVertexCount;
       cmd.glTextureId = currentGlTexId;
+      cmd.atlasId = currentAtlasId;
       pendingDrawCount++;
     }
     if (frameCount < 5 && vtxCount > 0) {
@@ -445,14 +451,13 @@ public class MetalParticleRenderer {
     vtxCount++;
   }
 
-  private long getOrCreateMetalTexture(int glTextureId) {
+  private long getOrCreateMetalTexture(int glTextureId, Identifier atlasId) {
     if (glTextureId == 0 || device == 0)
       return 0;
     boolean inBounds = glTextureId >= 0 && glTextureId < TEXTURE_CACHE_SIZE;
     int lastUpload = inBounds ? textureUploadFrame[glTextureId] : -1;
-    boolean needsRefresh = (lastUpload < 0) ||
-        (frameCount - lastUpload >= ATLAS_REFRESH_FRAMES);
     long cached = inBounds ? textureCache[glTextureId] : TEXTURE_UNCACHED;
+    boolean needsRefresh = shouldRefreshTexture(cached, lastUpload, atlasId);
     if (cached != TEXTURE_UNCACHED && !needsRefresh)
       return cached;
     try {
@@ -507,6 +512,17 @@ public class MetalParticleRenderer {
         textureCache[glTextureId] = 0L;
       return 0;
     }
+  }
+
+  private boolean shouldRefreshTexture(long cached, int lastUpload,
+      Identifier atlasId) {
+    if (cached == TEXTURE_UNCACHED || lastUpload < 0) {
+      return true;
+    }
+    if (TextureAtlas.LOCATION_BLOCKS.equals(atlasId)) {
+      return MetalTextureManager.atlasDirty;
+    }
+    return frameCount - lastUpload >= ATLAS_REFRESH_FRAMES;
   }
 
   private int getGlTextureIdForAtlas(Identifier atlasId) {
@@ -585,5 +601,6 @@ public class MetalParticleRenderer {
     int startVertex;
     int vertexCount;
     int glTextureId;
+    Identifier atlasId;
   }
 }

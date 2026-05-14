@@ -88,6 +88,7 @@ public class CustomChunkMesher {
   private static final int BURST_MAX_BUILDER_THREADS = 32;
   private static final int BURST_MAX_INSTANT_THREADS = 14;
   private static final int HIGH_PRIORITY_QUEUE_SPILLOVER_THRESHOLD = 192;
+  private volatile boolean aggressiveApproximateLighting;
   private final java.util.concurrent.atomic.AtomicLong visibleSectionLatencyAccNs = new java.util.concurrent.atomic.AtomicLong(
       0L);
   private final java.util.concurrent.atomic.AtomicInteger visibleSectionLatencySamples = new java.util.concurrent.atomic.AtomicInteger(
@@ -230,13 +231,13 @@ public class CustomChunkMesher {
     this.pendingBlockUpdateNanos.defaultReturnValue(0L);
     int processors = Runtime.getRuntime().availableProcessors();
 
-    int reservedCores = processors >= 12 ? 3 : 2;
-    int warmupThreads = Math.max(3, Math.min(10, processors - reservedCores));
-    int steadyThreads = Math.max(2, Math.min(8, warmupThreads - 2));
-    int maxBuilderThreads = Math.max(warmupThreads, Math.min(16, processors));
-    int steadyInstantThreads = processors >= 12 ? 3 : 2;
-    int maxInstantThreads = processors >= 16 ? 6 : (processors >= 10 ? 5 : 3);
-    int interactiveThreads = processors >= 12 ? 2 : 1;
+    int reservedCores = processors >= 12 ? 2 : 1;
+    int warmupThreads = Math.max(4, Math.min(12, processors - reservedCores));
+    int steadyThreads = Math.max(3, Math.min(10, warmupThreads - 1));
+    int maxBuilderThreads = Math.max(warmupThreads, Math.min(20, processors + 2));
+    int steadyInstantThreads = processors >= 10 ? 4 : 3;
+    int maxInstantThreads = processors >= 16 ? 8 : (processors >= 10 ? 6 : 4);
+    int interactiveThreads = processors >= 12 ? 3 : 2;
     final int warmupThreadCount = warmupThreads;
     final int steadyThreadCount = steadyThreads;
     this.boostedBuilderThreadCount = warmupThreadCount;
@@ -734,6 +735,7 @@ public class CustomChunkMesher {
 
   public void setLoadingModeThreadBudget(boolean loadingMode, int totalPending) {
     int pending = Math.max(getPendingCount(), totalPending);
+    aggressiveApproximateLighting = loadingMode || pending >= 256;
     if (pending <= 0) {
       updateThreadPoolSize(builderPool, 0);
       updateThreadPoolSize(instantRebuildPool, 0);
@@ -2771,18 +2773,27 @@ public class CustomChunkMesher {
     return null;
   }
 
+  private static LevelChunkSection resolveSection(ClientLevel world, int chunkX,
+      int chunkY, int chunkZ) {
+    if (world == null)
+      return null;
+    LevelChunk chunk = world.getChunkSource().getChunkNow(chunkX, chunkZ);
+    if (chunk == null)
+      return null;
+    int sectionIdx = chunk.getSectionIndexFromSectionY(chunkY);
+    LevelChunkSection[] sections = chunk.getSections();
+    if (sectionIdx < 0 || sectionIdx >= sections.length)
+      return null;
+    return sections[sectionIdx];
+  }
+
   private boolean readNeighborFace(ClientLevel world, int nCx, int nCy, int nCz,
       int faceDir, int[] out) {
-    if (world == null)
-      return false;
-    LevelChunk nChunk = world.getChunkSource().getChunkNow(nCx, nCz);
-    if (nChunk == null)
-      return false;
-    int sectionIdx = nChunk.getSectionIndexFromSectionY(nCy);
-    LevelChunkSection[] sections = nChunk.getSections();
-    if (sectionIdx < 0 || sectionIdx >= sections.length)
-      return false;
-    LevelChunkSection section = sections[sectionIdx];
+    return readNeighborFace(resolveSection(world, nCx, nCy, nCz), faceDir, out);
+  }
+
+  private boolean readNeighborFace(LevelChunkSection section, int faceDir,
+      int[] out) {
     if (section == null || section.hasOnlyAir())
       return false;
     java.util.Arrays.fill(out, 0);
@@ -2854,16 +2865,15 @@ public class CustomChunkMesher {
 
   private boolean readNeighborLightFace(ClientLevel world, int nCx, int nCy, int nCz,
       int faceDir, byte[] out, BlockPos.MutableBlockPos mutablePos) {
-    if (world == null)
+    return readNeighborLightFace(world, nCx * 16, nCy * 16, nCz * 16,
+        resolveSection(world, nCx, nCy, nCz), faceDir, out, mutablePos);
+  }
+
+  private boolean readNeighborLightFace(ClientLevel world, int baseX, int baseY,
+      int baseZ, LevelChunkSection section, int faceDir, byte[] out,
+      BlockPos.MutableBlockPos mutablePos) {
+    if (world == null || section == null || section.hasOnlyAir())
       return false;
-    LevelChunk nChunk = world.getChunkSource().getChunkNow(nCx, nCz);
-    if (nChunk == null)
-      return false;
-    int sectionIdx = nChunk.getSectionIndexFromSectionY(nCy);
-    LevelChunkSection[] sections = nChunk.getSections();
-    if (sectionIdx < 0 || sectionIdx >= sections.length)
-      return false;
-    int baseX = nCx * 16, baseY = nCy * 16, baseZ = nCz * 16;
     try {
       switch (faceDir) {
         case 0:
@@ -3012,7 +3022,8 @@ public class CustomChunkMesher {
     if (!initialized)
       return;
     final int effectiveLodLevel = Math.max(0, Math.min(4, lodLevel));
-    final boolean useApproximateLight = highPriority && !interactivePriority;
+    final boolean useApproximateLight = !interactivePriority
+        && (highPriority || aggressiveApproximateLighting);
     long key = packChunkKey(chunkX, chunkY, chunkZ);
     boolean wasDirty;
     synchronized (dirtyKeys) {
@@ -3138,36 +3149,56 @@ public class CustomChunkMesher {
         byte[] nXNegLight = null, nXPosLight = null;
         byte[] nYNegLight = null, nYPosLight = null;
         byte[] nZNegLight = null, nZPosLight = null;
+        LevelChunkSection sectionXNeg = resolveSection(world, chunkX - 1, chunkY,
+            chunkZ);
+        LevelChunkSection sectionXPos = resolveSection(world, chunkX + 1, chunkY,
+            chunkZ);
+        LevelChunkSection sectionYNeg = sectionIdx > 0
+            ? chunkSections[sectionIdx - 1]
+            : null;
+        LevelChunkSection sectionYPos = sectionIdx + 1 < chunkSections.length
+            ? chunkSections[sectionIdx + 1]
+            : null;
+        LevelChunkSection sectionZNeg = resolveSection(world, chunkX, chunkY,
+            chunkZ - 1);
+        LevelChunkSection sectionZPos = resolveSection(world, chunkX, chunkY,
+            chunkZ + 1);
 
         int[] poolXNeg = N_XNEG_FACE_POOL.get(), poolXPos = N_XPOS_FACE_POOL.get();
         int[] poolYNeg = N_YNEG_FACE_POOL.get(), poolYPos = N_YPOS_FACE_POOL.get();
         int[] poolZNeg = N_ZNEG_FACE_POOL.get(), poolZPos = N_ZPOS_FACE_POOL.get();
-        neighborXNeg = readNeighborFace(world, chunkX - 1, chunkY, chunkZ, 4, poolXNeg) ? poolXNeg : null;
-        neighborXPos = readNeighborFace(world, chunkX + 1, chunkY, chunkZ, 5, poolXPos) ? poolXPos : null;
-        neighborYNeg = readNeighborFace(world, chunkX, chunkY - 1, chunkZ, 0, poolYNeg) ? poolYNeg : null;
-        neighborYPos = readNeighborFace(world, chunkX, chunkY + 1, chunkZ, 1, poolYPos) ? poolYPos : null;
-        neighborZNeg = readNeighborFace(world, chunkX, chunkY, chunkZ - 1, 2, poolZNeg) ? poolZNeg : null;
-        neighborZPos = readNeighborFace(world, chunkX, chunkY, chunkZ + 1, 3, poolZPos) ? poolZPos : null;
+        neighborXNeg = readNeighborFace(sectionXNeg, 4, poolXNeg) ? poolXNeg : null;
+        neighborXPos = readNeighborFace(sectionXPos, 5, poolXPos) ? poolXPos : null;
+        neighborYNeg = readNeighborFace(sectionYNeg, 0, poolYNeg) ? poolYNeg : null;
+        neighborYPos = readNeighborFace(sectionYPos, 1, poolYPos) ? poolYPos : null;
+        neighborZNeg = readNeighborFace(sectionZNeg, 2, poolZNeg) ? poolZNeg : null;
+        neighborZPos = readNeighborFace(sectionZPos, 3, poolZPos) ? poolZPos : null;
 
         BlockPos.MutableBlockPos sharedMpos = MUTABLE_POS_POOL.get();
         if (!useApproximateLight) {
           nXNegLight = N_XNEG_LIGHT_POOL.get();
-          if (!readNeighborLightFace(world, chunkX - 1, chunkY, chunkZ, 4, nXNegLight, sharedMpos))
+          if (!readNeighborLightFace(world, (chunkX - 1) * 16, chunkY * 16,
+              chunkZ * 16, sectionXNeg, 4, nXNegLight, sharedMpos))
             nXNegLight = null;
           nXPosLight = N_XPOS_LIGHT_POOL.get();
-          if (!readNeighborLightFace(world, chunkX + 1, chunkY, chunkZ, 5, nXPosLight, sharedMpos))
+          if (!readNeighborLightFace(world, (chunkX + 1) * 16, chunkY * 16,
+              chunkZ * 16, sectionXPos, 5, nXPosLight, sharedMpos))
             nXPosLight = null;
           nYNegLight = N_YNEG_LIGHT_POOL.get();
-          if (!readNeighborLightFace(world, chunkX, chunkY - 1, chunkZ, 0, nYNegLight, sharedMpos))
+          if (!readNeighborLightFace(world, chunkX * 16, (chunkY - 1) * 16,
+              chunkZ * 16, sectionYNeg, 0, nYNegLight, sharedMpos))
             nYNegLight = null;
           nYPosLight = N_YPOS_LIGHT_POOL.get();
-          if (!readNeighborLightFace(world, chunkX, chunkY + 1, chunkZ, 1, nYPosLight, sharedMpos))
+          if (!readNeighborLightFace(world, chunkX * 16, (chunkY + 1) * 16,
+              chunkZ * 16, sectionYPos, 1, nYPosLight, sharedMpos))
             nYPosLight = null;
           nZNegLight = N_ZNEG_LIGHT_POOL.get();
-          if (!readNeighborLightFace(world, chunkX, chunkY, chunkZ - 1, 2, nZNegLight, sharedMpos))
+          if (!readNeighborLightFace(world, chunkX * 16, chunkY * 16,
+              (chunkZ - 1) * 16, sectionZNeg, 2, nZNegLight, sharedMpos))
             nZNegLight = null;
           nZPosLight = N_ZPOS_LIGHT_POOL.get();
-          if (!readNeighborLightFace(world, chunkX, chunkY, chunkZ + 1, 3, nZPosLight, sharedMpos))
+          if (!readNeighborLightFace(world, chunkX * 16, chunkY * 16,
+              (chunkZ + 1) * 16, sectionZPos, 3, nZPosLight, sharedMpos))
             nZPosLight = null;
         }
         byte[] lightData = LIGHT_DATA_POOL.get();

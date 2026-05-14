@@ -457,27 +457,28 @@ static inline bool frustumTestAABB(const float p[24], float x0, float y0,
   float32x4_t vz0 = vdupq_n_f32(z0), vz1 = vdupq_n_f32(z1);
   float32x4_t zero = vdupq_n_f32(0.0f);
   for (int i = 0; i < 6; i += 2) {
+    if (i != 4) {
+      float32x4_t plane0 = vld1q_f32(&p[i * 4]);
 
-    float32x4_t plane0 = vld1q_f32(&p[i * 4]);
+      float32x4_t a0 = vdupq_laneq_f32(plane0, 0);
+      float32x4_t b0 = vdupq_laneq_f32(plane0, 1);
+      float32x4_t c0 = vdupq_laneq_f32(plane0, 2);
+      float32x4_t d0 = vdupq_laneq_f32(plane0, 3);
 
-    float32x4_t a0 = vdupq_laneq_f32(plane0, 0);
-    float32x4_t b0 = vdupq_laneq_f32(plane0, 1);
-    float32x4_t c0 = vdupq_laneq_f32(plane0, 2);
-    float32x4_t d0 = vdupq_laneq_f32(plane0, 3);
+      uint32x4_t maskA0 = vcgeq_f32(a0, zero);
+      uint32x4_t maskB0 = vcgeq_f32(b0, zero);
+      uint32x4_t maskC0 = vcgeq_f32(c0, zero);
+      float32x4_t px0 = vbslq_f32(maskA0, vx1, vx0);
+      float32x4_t py0 = vbslq_f32(maskB0, vy1, vy0);
+      float32x4_t pz0 = vbslq_f32(maskC0, vz1, vz0);
 
-    uint32x4_t maskA0 = vcgeq_f32(a0, zero);
-    uint32x4_t maskB0 = vcgeq_f32(b0, zero);
-    uint32x4_t maskC0 = vcgeq_f32(c0, zero);
-    float32x4_t px0 = vbslq_f32(maskA0, vx1, vx0);
-    float32x4_t py0 = vbslq_f32(maskB0, vy1, vy0);
-    float32x4_t pz0 = vbslq_f32(maskC0, vz1, vz0);
-
-    float32x4_t dot0 = vfmaq_f32(d0, a0, px0);
-    dot0 = vfmaq_f32(dot0, b0, py0);
-    dot0 = vfmaq_f32(dot0, c0, pz0);
-    if (vgetq_lane_f32(dot0, 0) < 0)
-      return false;
-    if (i + 1 < 6) {
+      float32x4_t dot0 = vfmaq_f32(d0, a0, px0);
+      dot0 = vfmaq_f32(dot0, b0, py0);
+      dot0 = vfmaq_f32(dot0, c0, pz0);
+      if (vgetq_lane_f32(dot0, 0) < 0)
+        return false;
+    }
+    if (i + 1 < 6 && i + 1 != 4) {
       float32x4_t plane1 = vld1q_f32(&p[(i + 1) * 4]);
       float32x4_t a1 = vdupq_laneq_f32(plane1, 0);
       float32x4_t b1 = vdupq_laneq_f32(plane1, 1);
@@ -499,6 +500,8 @@ static inline bool frustumTestAABB(const float p[24], float x0, float y0,
   return true;
 #else
   for (int i = 0; i < 6; i++) {
+    if (i == 4)
+      continue;
     float a = p[i * 4], b = p[i * 4 + 1], c = p[i * 4 + 2], d = p[i * 4 + 3];
     float px = (a >= 0) ? x1 : x0;
     float py = (b >= 0) ? y1 : y0;
@@ -528,6 +531,8 @@ static inline uint32_t frustumTestAABB_x4(const float p[24], const float ox[4],
 
   uint32x4_t visible = vdupq_n_u32(0xFFFFFFFF);
   for (int i = 0; i < 6; i++) {
+    if (i == 4)
+      continue;
     float a = p[i * 4], b = p[i * 4 + 1], c = p[i * 4 + 2], d = p[i * 4 + 3];
 
     float32x4_t va = vdupq_n_f32(a);
@@ -590,10 +595,10 @@ static void extractFrustumPlanes(const float m[16], float out[24]) {
   out[14] = m[11] - m[9];
   out[15] = m[15] - m[13];
 
-  out[16] = m[3] + m[2];
-  out[17] = m[7] + m[6];
-  out[18] = m[11] + m[10];
-  out[19] = m[15] + m[14];
+  out[16] = m[2];
+  out[17] = m[6];
+  out[18] = m[10];
+  out[19] = m[14];
 
   out[20] = m[3] - m[2];
   out[21] = m[7] - m[6];

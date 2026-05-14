@@ -19,34 +19,22 @@ public class WorldRendererTerrainMixin {
   private int metalrender$skippedTerrainGroups = 0;
   @Unique
   private boolean metalrender$loggedWaitingForMetalDraw = false;
-  @Unique
-  private int metalrender$zeroDrawStreak = 0;
-  @Unique
-  private static final int METAL_ZERO_DRAW_GRACE_FRAMES = 4;
 
   @Unique
   private boolean metalrender$shouldSkipVanillaTerrain() {
     if (!MetalRenderClient.isEnabled()) {
       metalrender$loggedWaitingForMetalDraw = false;
-      metalrender$zeroDrawStreak = 0;
       return false;
     }
     MetalWorldRenderer wr = MetalRenderClient.getWorldRenderer();
     if (wr == null || !wr.metalActive()) {
       metalrender$loggedWaitingForMetalDraw = false;
-      metalrender$zeroDrawStreak = 0;
       return false;
     }
 
     int drawnChunks = wr.getLastDrawnChunkCount();
     if (drawnChunks > 0) {
-      metalrender$zeroDrawStreak = 0;
       metalrender$loggedWaitingForMetalDraw = false;
-      return true;
-    }
-
-    metalrender$zeroDrawStreak++;
-    if (metalrender$zeroDrawStreak <= METAL_ZERO_DRAW_GRACE_FRAMES) {
       return true;
     }
 
