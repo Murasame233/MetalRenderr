@@ -77,11 +77,34 @@ public class CustomChunkMesher {
   private ExecutorService dirtyRebuildPool;
 
 
+<<<<<<< HEAD
   private ExecutorService instantRebuildPool;
 
 
   private static final Semaphore UPLOAD_SEMAPHORE = new Semaphore(2);
 
+=======
+  private static final Semaphore UPLOAD_SEMAPHORE = new Semaphore(6);
+  private static final int FALLBACK_UPLOAD_PARALLELISM = 6;
+  private static final int FAST_UPLOAD_PARALLELISM = 24;
+  private static final Semaphore FALLBACK_UPLOAD_SEMAPHORE = new Semaphore(FALLBACK_UPLOAD_PARALLELISM);
+  private static final Semaphore FAST_UPLOAD_SEMAPHORE = new Semaphore(FAST_UPLOAD_PARALLELISM);
+  private volatile boolean fastUploadPathActive;
+  private static final int NORMAL_TOTAL_THREAD_BUDGET = 100;
+  private static final int BURST_TOTAL_THREAD_BUDGET = 180;
+  private static final int BURST_MAX_BUILDER_THREADS = 32;
+  private static final int BURST_MAX_INSTANT_THREADS = 14;
+  private static final int HIGH_PRIORITY_QUEUE_SPILLOVER_THRESHOLD = 192;
+  private volatile boolean aggressiveApproximateLighting;
+  private final java.util.concurrent.atomic.AtomicLong visibleSectionLatencyAccNs = new java.util.concurrent.atomic.AtomicLong(
+      0L);
+  private final java.util.concurrent.atomic.AtomicInteger visibleSectionLatencySamples = new java.util.concurrent.atomic.AtomicInteger(
+      0);
+  private final java.util.concurrent.atomic.AtomicLong blockUpdateLatencyAccNs = new java.util.concurrent.atomic.AtomicLong(
+      0L);
+  private final java.util.concurrent.atomic.AtomicInteger blockUpdateLatencySamples = new java.util.concurrent.atomic.AtomicInteger(
+      0);
+>>>>>>> 62d2482 (optimisation for high-rend scenes with tons of chunks. also fixed chunk loading speeds)
 
   private static final byte[] FULL_CUBE_CACHE = new byte[32768];
 
@@ -216,6 +239,7 @@ public class CustomChunkMesher {
     this.dirtyGeneration.defaultReturnValue(0L);
     int processors = Runtime.getRuntime().availableProcessors();
 
+<<<<<<< HEAD
 
 
 
@@ -228,6 +252,15 @@ public class CustomChunkMesher {
       warmupThreads = 5;
       steadyThreads = 3;
     }
+=======
+    int reservedCores = processors >= 12 ? 2 : 1;
+    int warmupThreads = Math.max(4, Math.min(12, processors - reservedCores));
+    int steadyThreads = Math.max(3, Math.min(10, warmupThreads - 1));
+    int maxBuilderThreads = Math.max(warmupThreads, Math.min(20, processors + 2));
+    int steadyInstantThreads = processors >= 10 ? 4 : 3;
+    int maxInstantThreads = processors >= 16 ? 8 : (processors >= 10 ? 6 : 4);
+    int interactiveThreads = processors >= 12 ? 3 : 2;
+>>>>>>> 62d2482 (optimisation for high-rend scenes with tons of chunks. also fixed chunk loading speeds)
     final int warmupThreadCount = warmupThreads;
     final int steadyThreadCount = steadyThreads;
     this.boostedBuilderThreadCount = warmupThreadCount;
@@ -570,8 +603,79 @@ public class CustomChunkMesher {
     return builderPool.getCorePoolSize();
   }
 
+<<<<<<< HEAD
   public void setLoadingModeThreadBudget(boolean loadingMode) {
     int target = loadingMode ? boostedBuilderThreadCount : steadyBuilderThreadCount;
+=======
+  private static void updateThreadPoolSize(java.util.concurrent.ThreadPoolExecutor pool, int target) {
+    int normalizedCore = Math.max(0, target);
+    int normalizedMax = Math.max(1, target);
+    int currentCore = pool.getCorePoolSize();
+    int currentMax = pool.getMaximumPoolSize();
+    if (currentCore == normalizedCore && currentMax == normalizedMax) {
+      return;
+    }
+    if (normalizedMax > currentMax) {
+      pool.setMaximumPoolSize(normalizedMax);
+      pool.setCorePoolSize(normalizedCore);
+    } else {
+      pool.setCorePoolSize(normalizedCore);
+      pool.setMaximumPoolSize(normalizedMax);
+    }
+  }
+
+  private boolean isBurstThreadModeEnabled() {
+    MetalRenderConfig config = MetalRenderClient.getConfig();
+    return config != null && config.enableBurstThreadMode;
+  }
+
+  private int getThreadBudgetCap() {
+    return isBurstThreadModeEnabled() ? BURST_TOTAL_THREAD_BUDGET : NORMAL_TOTAL_THREAD_BUDGET;
+  }
+
+  private int getBuilderThreadCap() {
+    if (!isBurstThreadModeEnabled()) {
+      return maxBuilderThreadCount;
+    }
+    int processors = Runtime.getRuntime().availableProcessors();
+    return Math.max(maxBuilderThreadCount,
+        Math.min(BURST_MAX_BUILDER_THREADS, processors + 8));
+  }
+
+  private int getInstantThreadCap() {
+    if (!isBurstThreadModeEnabled()) {
+      return maxInstantThreadCount;
+    }
+    return Math.max(maxInstantThreadCount, BURST_MAX_INSTANT_THREADS);
+  }
+
+  public void setLoadingModeThreadBudget(boolean loadingMode, int totalPending) {
+    int pending = Math.max(getPendingCount(), totalPending);
+    aggressiveApproximateLighting = loadingMode || pending >= 256;
+    if (pending <= 0) {
+      updateThreadPoolSize(builderPool, 0);
+      updateThreadPoolSize(instantRebuildPool, 0);
+      return;
+    }
+    int baseTarget = loadingMode ? boostedBuilderThreadCount : steadyBuilderThreadCount;
+    if (isBurstThreadModeEnabled()) {
+      baseTarget += loadingMode ? 2 : 1;
+    }
+    int backlogBoost = 0;
+    if (pending >= 8192) {
+      backlogBoost = 10;
+    } else if (pending >= 4096) {
+      backlogBoost = 8;
+    } else if (pending >= 2048) {
+      backlogBoost = 6;
+    } else if (pending >= 1024) {
+      backlogBoost = 4;
+    } else if (pending >= 512) {
+      backlogBoost = 2;
+    } else if (pending >= 256) {
+      backlogBoost = 1;
+    }
+>>>>>>> 62d2482 (optimisation for high-rend scenes with tons of chunks. also fixed chunk loading speeds)
     int currentCore = builderPool.getCorePoolSize();
     int currentMax = builderPool.getMaximumPoolSize();
     if (currentCore == target && currentMax == target) {
@@ -2640,6 +2744,7 @@ public class CustomChunkMesher {
     return null;
   }
 
+<<<<<<< HEAD
 
   private boolean readNeighborFace(ClientWorld world, int nCx, int nCy, int nCz,
       int faceDir, int[] out) {
@@ -2654,6 +2759,30 @@ public class CustomChunkMesher {
       return false;
     ChunkSection section = sections[sectionIdx];
     if (section == null || section.isEmpty())
+=======
+  private static LevelChunkSection resolveSection(ClientLevel world, int chunkX,
+      int chunkY, int chunkZ) {
+    if (world == null)
+      return null;
+    LevelChunk chunk = world.getChunkSource().getChunkNow(chunkX, chunkZ);
+    if (chunk == null)
+      return null;
+    int sectionIdx = chunk.getSectionIndexFromSectionY(chunkY);
+    LevelChunkSection[] sections = chunk.getSections();
+    if (sectionIdx < 0 || sectionIdx >= sections.length)
+      return null;
+    return sections[sectionIdx];
+  }
+
+  private boolean readNeighborFace(ClientLevel world, int nCx, int nCy, int nCz,
+      int faceDir, int[] out) {
+    return readNeighborFace(resolveSection(world, nCx, nCy, nCz), faceDir, out);
+  }
+
+  private boolean readNeighborFace(LevelChunkSection section, int faceDir,
+      int[] out) {
+    if (section == null || section.hasOnlyAir())
+>>>>>>> 62d2482 (optimisation for high-rend scenes with tons of chunks. also fixed chunk loading speeds)
       return false;
     java.util.Arrays.fill(out, 0);
     boolean hasAny = false;
@@ -2722,6 +2851,7 @@ public class CustomChunkMesher {
     return hasAny;
   }
 
+<<<<<<< HEAD
 
   private boolean readNeighborLightFace(ClientWorld world, int nCx, int nCy, int nCz,
       int faceDir, byte[] out, BlockPos.Mutable mutablePos) {
@@ -2736,6 +2866,19 @@ public class CustomChunkMesher {
     if (sectionIdx < 0 || sectionIdx >= sections.length)
       return false;
     int baseX = nCx * 16, baseY = nCy * 16, baseZ = nCz * 16;
+=======
+  private boolean readNeighborLightFace(ClientLevel world, int nCx, int nCy, int nCz,
+      int faceDir, byte[] out, BlockPos.MutableBlockPos mutablePos) {
+    return readNeighborLightFace(world, nCx * 16, nCy * 16, nCz * 16,
+        resolveSection(world, nCx, nCy, nCz), faceDir, out, mutablePos);
+  }
+
+  private boolean readNeighborLightFace(ClientLevel world, int baseX, int baseY,
+      int baseZ, LevelChunkSection section, int faceDir, byte[] out,
+      BlockPos.MutableBlockPos mutablePos) {
+    if (world == null || section == null || section.hasOnlyAir())
+      return false;
+>>>>>>> 62d2482 (optimisation for high-rend scenes with tons of chunks. also fixed chunk loading speeds)
     try {
       switch (faceDir) {
         case 0:
@@ -2812,6 +2955,12 @@ public class CustomChunkMesher {
       int lodLevel, boolean highPriority) {
     if (!initialized)
       return;
+<<<<<<< HEAD
+=======
+    final int effectiveLodLevel = Math.max(0, Math.min(4, lodLevel));
+    final boolean useApproximateLight = !interactivePriority
+        && (highPriority || aggressiveApproximateLighting);
+>>>>>>> 62d2482 (optimisation for high-rend scenes with tons of chunks. also fixed chunk loading speeds)
     long key = packChunkKey(chunkX, chunkY, chunkZ);
     boolean wasDirty;
     synchronized (dirtyKeys) {
@@ -2944,17 +3093,32 @@ public class CustomChunkMesher {
         byte[] nXNegLight = null, nXPosLight = null;
         byte[] nYNegLight = null, nYPosLight = null;
         byte[] nZNegLight = null, nZPosLight = null;
+        LevelChunkSection sectionXNeg = resolveSection(world, chunkX - 1, chunkY,
+            chunkZ);
+        LevelChunkSection sectionXPos = resolveSection(world, chunkX + 1, chunkY,
+            chunkZ);
+        LevelChunkSection sectionYNeg = sectionIdx > 0
+            ? chunkSections[sectionIdx - 1]
+            : null;
+        LevelChunkSection sectionYPos = sectionIdx + 1 < chunkSections.length
+            ? chunkSections[sectionIdx + 1]
+            : null;
+        LevelChunkSection sectionZNeg = resolveSection(world, chunkX, chunkY,
+            chunkZ - 1);
+        LevelChunkSection sectionZPos = resolveSection(world, chunkX, chunkY,
+            chunkZ + 1);
 
         int[] poolXNeg = N_XNEG_FACE_POOL.get(), poolXPos = N_XPOS_FACE_POOL.get();
         int[] poolYNeg = N_YNEG_FACE_POOL.get(), poolYPos = N_YPOS_FACE_POOL.get();
         int[] poolZNeg = N_ZNEG_FACE_POOL.get(), poolZPos = N_ZPOS_FACE_POOL.get();
-        neighborXNeg = readNeighborFace(world, chunkX - 1, chunkY, chunkZ, 4, poolXNeg) ? poolXNeg : null;
-        neighborXPos = readNeighborFace(world, chunkX + 1, chunkY, chunkZ, 5, poolXPos) ? poolXPos : null;
-        neighborYNeg = readNeighborFace(world, chunkX, chunkY - 1, chunkZ, 0, poolYNeg) ? poolYNeg : null;
-        neighborYPos = readNeighborFace(world, chunkX, chunkY + 1, chunkZ, 1, poolYPos) ? poolYPos : null;
-        neighborZNeg = readNeighborFace(world, chunkX, chunkY, chunkZ - 1, 2, poolZNeg) ? poolZNeg : null;
-        neighborZPos = readNeighborFace(world, chunkX, chunkY, chunkZ + 1, 3, poolZPos) ? poolZPos : null;
+        neighborXNeg = readNeighborFace(sectionXNeg, 4, poolXNeg) ? poolXNeg : null;
+        neighborXPos = readNeighborFace(sectionXPos, 5, poolXPos) ? poolXPos : null;
+        neighborYNeg = readNeighborFace(sectionYNeg, 0, poolYNeg) ? poolYNeg : null;
+        neighborYPos = readNeighborFace(sectionYPos, 1, poolYPos) ? poolYPos : null;
+        neighborZNeg = readNeighborFace(sectionZNeg, 2, poolZNeg) ? poolZNeg : null;
+        neighborZPos = readNeighborFace(sectionZPos, 3, poolZPos) ? poolZPos : null;
 
+<<<<<<< HEAD
 
         BlockPos.Mutable sharedMpos = MUTABLE_POS_POOL.get();
         nXNegLight = N_XNEG_LIGHT_POOL.get();
@@ -2975,6 +3139,35 @@ public class CustomChunkMesher {
         nZPosLight = N_ZPOS_LIGHT_POOL.get();
         if (!readNeighborLightFace(world, chunkX, chunkY, chunkZ + 1, 3, nZPosLight, sharedMpos))
           nZPosLight = null;
+=======
+        BlockPos.MutableBlockPos sharedMpos = MUTABLE_POS_POOL.get();
+        if (!useApproximateLight) {
+          nXNegLight = N_XNEG_LIGHT_POOL.get();
+          if (!readNeighborLightFace(world, (chunkX - 1) * 16, chunkY * 16,
+              chunkZ * 16, sectionXNeg, 4, nXNegLight, sharedMpos))
+            nXNegLight = null;
+          nXPosLight = N_XPOS_LIGHT_POOL.get();
+          if (!readNeighborLightFace(world, (chunkX + 1) * 16, chunkY * 16,
+              chunkZ * 16, sectionXPos, 5, nXPosLight, sharedMpos))
+            nXPosLight = null;
+          nYNegLight = N_YNEG_LIGHT_POOL.get();
+          if (!readNeighborLightFace(world, chunkX * 16, (chunkY - 1) * 16,
+              chunkZ * 16, sectionYNeg, 0, nYNegLight, sharedMpos))
+            nYNegLight = null;
+          nYPosLight = N_YPOS_LIGHT_POOL.get();
+          if (!readNeighborLightFace(world, chunkX * 16, (chunkY + 1) * 16,
+              chunkZ * 16, sectionYPos, 1, nYPosLight, sharedMpos))
+            nYPosLight = null;
+          nZNegLight = N_ZNEG_LIGHT_POOL.get();
+          if (!readNeighborLightFace(world, chunkX * 16, chunkY * 16,
+              (chunkZ - 1) * 16, sectionZNeg, 2, nZNegLight, sharedMpos))
+            nZNegLight = null;
+          nZPosLight = N_ZPOS_LIGHT_POOL.get();
+          if (!readNeighborLightFace(world, chunkX * 16, chunkY * 16,
+              (chunkZ + 1) * 16, sectionZPos, 3, nZPosLight, sharedMpos))
+            nZPosLight = null;
+        }
+>>>>>>> 62d2482 (optimisation for high-rend scenes with tons of chunks. also fixed chunk loading speeds)
         byte[] lightData = LIGHT_DATA_POOL.get();
 
 

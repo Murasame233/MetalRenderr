@@ -1,20 +1,18 @@
 package com.pebbles_boon.metalrender.nativebridge;
 
 public final class NativeBridge {
+        private static final boolean WINDOWS = System.getProperty("os.name", "")
+                        .toLowerCase(java.util.Locale.ROOT)
+                        .contains("win");
         private static volatile boolean libLoaded;
-        static {
-                try {
-                        System.loadLibrary("metalrender");
-                        libLoaded = true;
-                } catch (Throwable t) {
-                        libLoaded = false;
-                }
-        }
 
         private NativeBridge() {
         }
 
         public static void loadLibrary() {
+                if (WINDOWS || libLoaded) {
+                        return;
+                }
                 if (!libLoaded) {
                         System.loadLibrary("metalrender");
                         libLoaded = true;

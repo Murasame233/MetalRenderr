@@ -55,6 +55,9 @@ public class MetalWorldRenderer {
   private static final int TURN_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 24;
   private static final int WAIT_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 8;
   private static final int SATURATED_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 2;
+  private static final int PRIORITIZED_BUILD_STREAK_LIMIT = 2;
+  private static final int MAX_IN_FLIGHT_BUILD_TASKS = 96;
+  private static final int RESERVED_PRIORITY_IN_FLIGHT_SLOTS = 48;
   private static final long CHUNK_BUILD_WAIT_WINDOW_NS = 3_000_000L;
   private static final int HIGH_PRIORITY_LOADED_VERTICAL_RANGE = 3;
   private static final int TURN_PRIORITY_LOADED_CHUNK_RANGE = 24;
@@ -62,9 +65,18 @@ public class MetalWorldRenderer {
   private static final int TURN_PRIORITY_SCAN_FRAMES = 12;
   private static final int TURN_PRIORITY_FORWARD_SCAN_DEPTH = 6;
   private static final float TURN_PRIORITY_SCAN_COS_THRESHOLD = 0.45f;
+  private static final int IMMEDIATE_LOADED_CHUNK_BUILD_RANGE = 8;
+  private static final int IMPORTANT_REBUILD_CHUNK_RANGE = 2;
+  private static final int INTERACTIVE_PRIORITY_CHUNK_RANGE = 6;
+  private static final int INTERACTIVE_PRIORITY_SUBMISSIONS_PER_PASS = 8;
+  private static final int MAX_INTERACTIVE_PRIORITY_QUEUE_DEPTH = 16;
+  private static final int LOADING_BACKGROUND_SUBMISSIONS_PER_PASS = 32;
+  private static final int TURN_PRIORITY_BACKGROUND_SUBMISSIONS_PER_PASS = 16;
+  private static final int NORMAL_BACKGROUND_SUBMISSIONS_PER_PASS = 48;
   private static final int ACTIVE_CLOSE_RANGE_RESCAN_INTERVAL = 2;
   private static final int IDLE_CLOSE_RANGE_RESCAN_INTERVAL = 6;
   private static final int HOT_LOAD_REBUILD_RANGE = 12;
+  private static final int STARTUP_SOLID_FILL_MESH_THRESHOLD = 1536;
   private static final int PRESSURED_CLOSE_SCAN_RANGE = 6;
   private static final int SATURATED_CLOSE_SCAN_RANGE = 4;
   private static final long FULL_RENDERDIST_RESCAN_INTERVAL_NS = 1_500_000_000L;
@@ -661,6 +673,7 @@ public class MetalWorldRenderer {
     frustumCuller.update(projectionMatrix, modelViewMatrix, reusableCamPos);
     lastDrawnChunkCount = 0;
     renderer.beginFrame(tickDelta);
+<<<<<<< HEAD
     reusableMetalProj.set(projectionMatrix);
     reusableMetalProj.m02(0.5f * reusableMetalProj.m02() + 0.5f * reusableMetalProj.m03());
     reusableMetalProj.m12(0.5f * reusableMetalProj.m12() + 0.5f * reusableMetalProj.m13());
@@ -696,6 +709,19 @@ public class MetalWorldRenderer {
           skyBrightness = 1.0f;
       }
       NativeBridge.nSetSkyBrightness(renderer.getHandle(), skyBrightness);
+=======
+    Matrix4f metalProj = new Matrix4f(projectionMatrix);
+    metalProj.m02(0.5f * metalProj.m02() + 0.5f * metalProj.m03());
+    metalProj.m12(0.5f * metalProj.m12() + 0.5f * metalProj.m13());
+    metalProj.m22(0.5f * metalProj.m22() + 0.5f * metalProj.m23());
+    metalProj.m32(0.5f * metalProj.m32() + 0.5f * metalProj.m33());
+    renderer.setProjectionMatrix(metalProj);
+    renderer.setModelViewMatrix(modelViewMatrix);
+    renderer.setCameraPosition(camera.position().x, camera.position().y,
+        camera.position().z);
+    if (NativeBridge.isLibLoaded()) {
+      NativeBridge.nSetRenderDistance(Minecraft.getInstance().options.getEffectiveRenderDistance() * 16);
+>>>>>>> 62d2482 (optimisation for high-rend scenes with tons of chunks. also fixed chunk loading speeds)
     }
     if (texturesReady) {
       textureManager.updateLightmap();
@@ -929,10 +955,10 @@ public class MetalWorldRenderer {
     out[14] = vp.m23() - vp.m21();
     out[15] = vp.m33() - vp.m31();
     normalizePlane(out, 12);
-    out[16] = vp.m03() + vp.m02();
-    out[17] = vp.m13() + vp.m12();
-    out[18] = vp.m23() + vp.m22();
-    out[19] = vp.m33() + vp.m32();
+    out[16] = vp.m02();
+    out[17] = vp.m12();
+    out[18] = vp.m22();
+    out[19] = vp.m32();
     normalizePlane(out, 16);
     out[20] = vp.m03() - vp.m02();
     out[21] = vp.m13() - vp.m12();
@@ -1139,6 +1165,7 @@ public class MetalWorldRenderer {
   private float cachedForwardX = 0, cachedForwardZ = 1;
   private int lastScanPlayerCX = Integer.MIN_VALUE, lastScanPlayerCZ = Integer.MIN_VALUE;
   private int lastScanRenderDist = -1;
+<<<<<<< HEAD
 
   private int[] sortScratchKeys = new int[256];
   private long[] sortScratchKeyedIndices = new long[256];
@@ -1148,6 +1175,31 @@ public class MetalWorldRenderer {
   private long[] loadScratch = new long[128];
   private int[] loadScratchScore = new int[128];
   private int[] loadScratchRing = new int[128];
+=======
+  private int turnPriorityFrames = 0;
+  private int remainingPrioritizedBuilds = PRIORITIZED_BUILD_STREAK_LIMIT;
+
+  private static final class PendingBuildCandidate {
+    final long key;
+    final int index;
+    final int chunkX;
+    final int chunkY;
+    final int chunkZ;
+    final int chunkDist;
+    final int lodLevel;
+
+    PendingBuildCandidate(long key, int index, int chunkX, int chunkY,
+        int chunkZ, int chunkDist, int lodLevel) {
+      this.key = key;
+      this.index = index;
+      this.chunkX = chunkX;
+      this.chunkY = chunkY;
+      this.chunkZ = chunkZ;
+      this.chunkDist = chunkDist;
+      this.lodLevel = lodLevel;
+    }
+  }
+>>>>>>> 62d2482 (optimisation for high-rend scenes with tons of chunks. also fixed chunk loading speeds)
 
   private static long packChunkKey(int cx, int cy, int cz) {
     return ((long) (cx & 0x3FFFFF) << 42) | ((long) (cy & 0xFFFFF) << 22) | (cz & 0x3FFFFF);
@@ -1164,11 +1216,26 @@ public class MetalWorldRenderer {
     chunkMesher.buildMeshFromWorld(cx, cy, cz, lod, true);
   }
 
+<<<<<<< HEAD
   private void queueLightRefresh(int cx, int cy, int cz) {
     long key = packChunkKey(cx, cy, cz);
     int remaining = lightRefreshFrames.get(key);
     if (remaining < LIGHT_SOURCE_REFRESH_FRAMES) {
       lightRefreshFrames.put(key, LIGHT_SOURCE_REFRESH_FRAMES);
+=======
+  private static int unpackChunkY(long key) {
+    int chunkY = (int) ((key >> 22) & 0xFFFFF);
+    if ((chunkY & 0x80000) != 0) {
+      chunkY |= ~0xFFFFF;
+    }
+    return chunkY;
+  }
+
+  private static int unpackChunkZ(long key) {
+    int chunkZ = (int) (key & 0x3FFFFF);
+    if ((chunkZ & 0x200000) != 0) {
+      chunkZ |= ~0x3FFFFF;
+>>>>>>> 62d2482 (optimisation for high-rend scenes with tons of chunks. also fixed chunk loading speeds)
     }
   }
 
@@ -1182,12 +1249,50 @@ public class MetalWorldRenderer {
         lightRefreshScratch.add(entry.getLongKey());
       }
     }
+<<<<<<< HEAD
     for (int i = 0; i < lightRefreshScratch.size(); i++) {
       long key = lightRefreshScratch.getLong(i);
       int remaining = lightRefreshFrames.get(key);
       if (remaining <= 0) {
         lightRefreshFrames.remove(key);
         continue;
+=======
+    scanForPendingChunks(mc);
+    if (mc.player != null && chunkMesher.getMeshCount() < maxMeshes) {
+      int playerChunkX = mc.player.chunkPosition().x();
+      int playerChunkZ = mc.player.chunkPosition().z();
+      int playerSectionY = mc.player.getBlockY() >> 4;
+      boolean turnBurstActive = turnPriorityFrames > 0;
+      boolean startupSolidFill = loadingMode && loadingModeMeshCount < STARTUP_SOLID_FILL_MESH_THRESHOLD;
+      int mesherPending = chunkMesher.getPendingCount();
+      int visibleBacklog = pendingBuildSet.size() + mesherPending;
+      long buildBudget = turnBurstActive ? CHUNK_TURN_BUILD_BURST_NS : CHUNK_BUILD_BUDGET_NS;
+      int minBuilds = turnBurstActive ? MIN_CHUNK_TURN_BUILDS_PER_FRAME : MIN_CHUNK_BUILDS_PER_FRAME;
+      int highPrioritySubmissions = turnBurstActive
+          ? TURN_HIGH_PRIORITY_SUBMISSIONS_PER_PASS
+          : BASE_HIGH_PRIORITY_SUBMISSIONS_PER_PASS;
+      if (startupSolidFill) {
+        buildBudget = Math.max(buildBudget, CHUNK_HEAVY_BACKLOG_BUILD_BURST_NS);
+        minBuilds = Math.max(minBuilds, MIN_CHUNK_HEAVY_BACKLOG_BUILDS_PER_FRAME);
+        highPrioritySubmissions = Math.max(highPrioritySubmissions,
+            HEAVY_BACKLOG_HIGH_PRIORITY_SUBMISSIONS_PER_PASS);
+      }
+      if (mesherPending >= CHUNK_SCAN_SATURATED_THRESHOLD) {
+        buildBudget = Math.min(buildBudget, CHUNK_SATURATED_BUILD_BUDGET_NS);
+        minBuilds = Math.min(minBuilds, MIN_CHUNK_SATURATED_BUILDS_PER_FRAME);
+        highPrioritySubmissions = Math.min(highPrioritySubmissions,
+            SATURATED_HIGH_PRIORITY_SUBMISSIONS_PER_PASS);
+      } else if (visibleBacklog >= CHUNK_BACKLOG_HEAVY_THRESHOLD) {
+        buildBudget = Math.max(buildBudget, CHUNK_HEAVY_BACKLOG_BUILD_BURST_NS);
+        minBuilds = Math.max(minBuilds, MIN_CHUNK_HEAVY_BACKLOG_BUILDS_PER_FRAME);
+        highPrioritySubmissions = Math.max(highPrioritySubmissions,
+            HEAVY_BACKLOG_HIGH_PRIORITY_SUBMISSIONS_PER_PASS);
+      } else if (visibleBacklog >= CHUNK_BACKLOG_PRESSURE_THRESHOLD) {
+        buildBudget = Math.max(buildBudget, CHUNK_BACKLOG_BUILD_BURST_NS);
+        minBuilds = Math.max(minBuilds, MIN_CHUNK_BACKLOG_BUILDS_PER_FRAME);
+        highPrioritySubmissions = Math.max(highPrioritySubmissions,
+            BACKLOG_HIGH_PRIORITY_SUBMISSIONS_PER_PASS);
+>>>>>>> 62d2482 (optimisation for high-rend scenes with tons of chunks. also fixed chunk loading speeds)
       }
       int cx = (int) ((key >> 42) & 0x3FFFFF);
       if ((cx & 0x200000) != 0)
@@ -1304,7 +1409,15 @@ public class MetalWorldRenderer {
   }
 
 
+<<<<<<< HEAD
   private void triggerImmediateLodUpgrades(ClientWorld world, int playerChunkX, int playerChunkZ) {
+=======
+  private void scanForwardSector(ClientLevel world, int playerChunkX, int playerChunkZ,
+      int renderDist) {
+    int startRing = Math.min(HOT_LOAD_REBUILD_RANGE, renderDist) + 1;
+    scanForwardSector(world, playerChunkX, playerChunkZ, startRing, renderDist);
+  }
+>>>>>>> 62d2482 (optimisation for high-rend scenes with tons of chunks. also fixed chunk loading speeds)
 
     if (loadingMode)
       return;
@@ -1587,6 +1700,7 @@ public class MetalWorldRenderer {
       sortedBuildList.addAll(pendingBuildSet);
       final int pcx = playerChunkX;
       final int pcz = playerChunkZ;
+<<<<<<< HEAD
 
 
       final int sz = sortedBuildList.size();
@@ -1620,7 +1734,50 @@ public class MetalWorldRenderer {
       sortedBuildList.clear();
       for (int i = 0; i < sz; i++)
         sortedBuildList.add(reordered[i]);
+=======
+      final float fwdX = cachedForwardX;
+      final float fwdZ = cachedForwardZ;
+      final boolean startupSolidFill = loadingMode && loadingModeMeshCount < STARTUP_SOLID_FILL_MESH_THRESHOLD;
+      sortedBuildList.sort((a, b) -> {
+        int ax = (int) ((a >> 42) & 0x3FFFFF);
+        if ((ax & 0x200000) != 0)
+          ax |= ~0x3FFFFF;
+        int ay = (int) ((a >> 22) & 0xFFFFF);
+        if ((ay & 0x80000) != 0)
+          ay |= ~0xFFFFF;
+        int az = (int) (a & 0x3FFFFF);
+        if ((az & 0x200000) != 0)
+          az |= ~0x3FFFFF;
+        int bx = (int) ((b >> 42) & 0x3FFFFF);
+        if ((bx & 0x200000) != 0)
+          bx |= ~0x3FFFFF;
+        int by = (int) ((b >> 22) & 0xFFFFF);
+        if ((by & 0x80000) != 0)
+          by |= ~0xFFFFF;
+        int bz = (int) (b & 0x3FFFFF);
+        if ((bz & 0x200000) != 0)
+          bz |= ~0x3FFFFF;
+        float dotA = (ax - pcx) * fwdX + (az - pcz) * fwdZ;
+        float dotB = (bx - pcx) * fwdX + (bz - pcz) * fwdZ;
+        boolean frontA = dotA >= 0;
+        boolean frontB = dotB >= 0;
+        if (!startupSolidFill && frontA != frontB)
+          return frontA ? -1 : 1;
+        int distA = Math.abs(ax - pcx) + Math.abs(az - pcz);
+        int distB = Math.abs(bx - pcx) + Math.abs(bz - pcz);
+        if (distA != distB)
+          return Integer.compare(distA, distB);
+        int verticalDistA = Math.abs(ay - pcy);
+        int verticalDistB = Math.abs(by - pcy);
+        return Integer.compare(verticalDistA, verticalDistB);
+      });
+>>>>>>> 62d2482 (optimisation for high-rend scenes with tons of chunks. also fixed chunk loading speeds)
       sortedListDirty = false;
+    }
+    Minecraft mc = Minecraft.getInstance();
+    ClientLevel world = mc != null ? mc.level : null;
+    if (world == null) {
+      return 0;
     }
     long deadline = budgetNanos > 0 ? System.nanoTime() + budgetNanos : Long.MAX_VALUE;
     int builderThreads = chunkMesher.getBuilderThreadCount();
@@ -1630,6 +1787,7 @@ public class MetalWorldRenderer {
       return 0;
     int maxSubmit = Math.min(256, availableSubmit);
     int built = 0;
+<<<<<<< HEAD
     int consumed = 0;
     int size = sortedBuildList.size();
     while (consumed < size && built < maxSubmit) {
@@ -1664,6 +1822,114 @@ public class MetalWorldRenderer {
         }
       }
       chunkMesher.buildMeshFromWorld(cx, cy, cz, lodLevel);
+=======
+    int importantSubmitted = 0;
+    int backgroundSubmissions = 0;
+    int backgroundInFlightLimit = Math.max(1,
+        MAX_IN_FLIGHT_BUILD_TASKS - RESERVED_PRIORITY_IN_FLIGHT_SLOTS);
+    int backgroundSubmissionBudget = loadingMode
+        ? LOADING_BACKGROUND_SUBMISSIONS_PER_PASS
+        : (turnPriorityFrames > 0 ? TURN_PRIORITY_BACKGROUND_SUBMISSIONS_PER_PASS
+            : NORMAL_BACKGROUND_SUBMISSIONS_PER_PASS);
+    while (!sortedBuildList.isEmpty() && built < maxSubmit
+        && chunkMesher.getMeshCount() < maxMeshes) {
+      if (budgetNanos > 0 && built >= minBuilds && System.nanoTime() >= deadline)
+        break;
+      if (chunkMesher.getPendingCount() >= MAX_IN_FLIGHT_BUILD_TASKS) {
+        break;
+      }
+      PendingBuildCandidate importantCandidate = null;
+      PendingBuildCandidate normalCandidate = null;
+      int index = 0;
+      while (index < sortedBuildList.size()) {
+        long key = sortedBuildList.get(index);
+        int cx = unpackChunkX(key);
+        int cy = unpackChunkY(key);
+        int cz = unpackChunkZ(key);
+        if (chunkMesher.hasMesh(cx, cy, cz)) {
+          pendingBuildSet.remove(key);
+          sortedBuildList.remove(index);
+          continue;
+        }
+        int dx = cx - playerChunkX;
+        int dz = cz - playerChunkZ;
+        int chunkDist = Math.max(Math.abs(dx), Math.abs(dz));
+        boolean bypassReadiness = chunkDist <= IMPORTANT_REBUILD_CHUNK_RANGE;
+        if (!bypassReadiness && !isSectionBuildReady(world, cx, cy, cz)) {
+          index++;
+          continue;
+        }
+        int lodLevel = com.pebbles_boon.metalrender.config.MetalRenderConfig.getLodLevel(chunkDist);
+        PendingBuildCandidate candidate = new PendingBuildCandidate(key, index,
+            cx, cy, cz, chunkDist, lodLevel);
+        boolean importantBuild = importantSubmitted < highPrioritySubmissions
+            && isImportantPendingBuild(dx, dz, chunkDist);
+        if (importantBuild) {
+          importantCandidate = candidate;
+        } else if (normalCandidate == null) {
+          normalCandidate = candidate;
+        }
+        if (importantCandidate != null && normalCandidate != null) {
+          break;
+        }
+        index++;
+      }
+
+      if (importantCandidate == null && normalCandidate == null) {
+        break;
+      }
+
+      PendingBuildCandidate candidate;
+      boolean highPriority;
+      if (importantCandidate == null) {
+        candidate = normalCandidate;
+        highPriority = false;
+        remainingPrioritizedBuilds = PRIORITIZED_BUILD_STREAK_LIMIT;
+      } else if (normalCandidate == null) {
+        candidate = importantCandidate;
+        highPriority = true;
+        remainingPrioritizedBuilds = Math.max(0, remainingPrioritizedBuilds - 1);
+      } else if (remainingPrioritizedBuilds <= 0) {
+        candidate = normalCandidate;
+        highPriority = false;
+        remainingPrioritizedBuilds = PRIORITIZED_BUILD_STREAK_LIMIT;
+      } else if (importantCandidate.index <= normalCandidate.index) {
+        candidate = importantCandidate;
+        highPriority = true;
+        remainingPrioritizedBuilds = Math.max(0, remainingPrioritizedBuilds - 1);
+      } else {
+        candidate = normalCandidate;
+        highPriority = false;
+        remainingPrioritizedBuilds = PRIORITIZED_BUILD_STREAK_LIMIT;
+      }
+
+      boolean interactivePriority = candidate.lodLevel == 0 && highPriority
+          && candidate.chunkDist <= INTERACTIVE_PRIORITY_CHUNK_RANGE
+          && (loadingMode || turnPriorityFrames > 0)
+          && chunkMesher.getInteractiveQueueDepth() < MAX_INTERACTIVE_PRIORITY_QUEUE_DEPTH;
+      if (!highPriority && !interactivePriority) {
+        if (backgroundSubmissions >= backgroundSubmissionBudget) {
+          break;
+        }
+        if (chunkMesher.getPendingCount() >= backgroundInFlightLimit) {
+          break;
+        }
+      }
+      if (interactivePriority) {
+        chunkMesher.buildMeshFromWorldInteractive(candidate.chunkX,
+            candidate.chunkY, candidate.chunkZ);
+      } else {
+        chunkMesher.buildMeshFromWorld(candidate.chunkX, candidate.chunkY,
+            candidate.chunkZ, candidate.lodLevel, highPriority);
+      }
+      if (highPriority) {
+        importantSubmitted++;
+      } else {
+        backgroundSubmissions++;
+      }
+      pendingBuildSet.remove(candidate.key);
+      sortedBuildList.remove(candidate.index);
+>>>>>>> 62d2482 (optimisation for high-rend scenes with tons of chunks. also fixed chunk loading speeds)
       built++;
     }
 
@@ -1788,8 +2054,14 @@ public class MetalWorldRenderer {
       org.joml.Vector3f camPos) {
     if (client.player == null)
       return;
+<<<<<<< HEAD
     int renderDist = client.options.getViewDistance().getValue();
     float maxDist = (renderDist + 2) * 16.0f;
+=======
+    int renderDist = mc.options.renderDistance().get();
+    int extraMarginChunks = shouldPinLoadedMeshes(mc) ? 8 : 2;
+    float maxDist = (renderDist + extraMarginChunks) * 16.0f;
+>>>>>>> 62d2482 (optimisation for high-rend scenes with tons of chunks. also fixed chunk loading speeds)
     float maxDistSq = maxDist * maxDist;
 
 
@@ -1884,11 +2156,31 @@ public class MetalWorldRenderer {
   public void onChunkLoaded(int chunkX, int chunkZ, net.minecraft.world.chunk.WorldChunk chunk) {
     if (!worldLoaded || !renderingActive)
       return;
+<<<<<<< HEAD
     net.minecraft.world.chunk.ChunkSection[] sections = chunk.getSectionArray();
+=======
+    boolean highPriorityChunk = shouldPrioritizeLoadedChunk(chunkX, chunkZ);
+    Minecraft mc = Minecraft.getInstance();
+    int playerChunkX = mc != null && mc.player != null
+        ? mc.player.chunkPosition().x()
+        : Integer.MIN_VALUE;
+    int playerChunkZ = mc != null && mc.player != null
+        ? mc.player.chunkPosition().z()
+        : Integer.MIN_VALUE;
+    int loadedChunkDistance = mc != null && mc.player != null
+        ? Math.max(Math.abs(chunkX - playerChunkX), Math.abs(chunkZ - playerChunkZ))
+        : Integer.MAX_VALUE;
+    boolean immediateBuildChunk = loadedChunkDistance <= IMMEDIATE_LOADED_CHUNK_BUILD_RANGE;
+    int playerSectionY = mc != null && mc.player != null
+        ? mc.player.getBlockY() >> 4
+        : Integer.MIN_VALUE;
+    LevelChunkSection[] sections = chunk.getSections();
+>>>>>>> 62d2482 (optimisation for high-rend scenes with tons of chunks. also fixed chunk loading speeds)
     for (int sy = 0; sy < sections.length; sy++) {
       net.minecraft.world.chunk.ChunkSection section = sections[sy];
       if (section == null || section.isEmpty())
         continue;
+<<<<<<< HEAD
       int worldY = chunk.sectionIndexToCoord(sy);
       if (!chunkMesher.hasMesh(chunkX, worldY, chunkZ)) {
         if (pendingBuildSet.add(packChunkKey(chunkX, worldY, chunkZ))) {
@@ -1909,8 +2201,20 @@ public class MetalWorldRenderer {
         chunkMesher.markDirty(chunkX, worldY + 1, chunkZ);
         chunkMesher.markDirty(chunkX, worldY, chunkZ - 1);
         chunkMesher.markDirty(chunkX, worldY, chunkZ + 1);
+=======
+      int worldY = chunk.getSectionYFromSectionIndex(sy);
+      chunkMesher.noteSectionAvailable(chunkX, worldY, chunkZ);
+      boolean highPrioritySection = highPriorityChunk
+          && Math.abs(worldY - playerSectionY) <= HIGH_PRIORITY_LOADED_VERTICAL_RANGE;
+      if (highPrioritySection && immediateBuildChunk
+          && mc != null && mc.level != null
+          && isSectionBuildReady(mc.level, chunkX, worldY, chunkZ)
+          && !chunkMesher.hasMesh(chunkX, worldY, chunkZ)) {
+        chunkMesher.buildMeshFromWorld(chunkX, worldY, chunkZ, 0, true);
+>>>>>>> 62d2482 (optimisation for high-rend scenes with tons of chunks. also fixed chunk loading speeds)
       } else {
 
+<<<<<<< HEAD
         if (chunkMesher.hasMeshIgnoreDirty(chunkX - 1, worldY, chunkZ))
           chunkMesher.markDirty(chunkX - 1, worldY, chunkZ);
         if (chunkMesher.hasMeshIgnoreDirty(chunkX + 1, worldY, chunkZ))
@@ -1923,6 +2227,67 @@ public class MetalWorldRenderer {
           chunkMesher.markDirty(chunkX, worldY, chunkZ - 1);
         if (chunkMesher.hasMeshIgnoreDirty(chunkX, worldY, chunkZ + 1))
           chunkMesher.markDirty(chunkX, worldY, chunkZ + 1);
+=======
+  private boolean shouldPrioritizeLoadedChunk(int chunkX, int chunkZ) {
+    Minecraft mc = Minecraft.getInstance();
+    if (mc == null || mc.player == null)
+      return false;
+    int playerChunkX = mc.player.chunkPosition().x();
+    int playerChunkZ = mc.player.chunkPosition().z();
+    int dx = chunkX - playerChunkX;
+    int dz = chunkZ - playerChunkZ;
+    int chunkDistance = Math.max(Math.abs(dx), Math.abs(dz));
+    if (chunkDistance <= HOT_LOAD_REBUILD_RANGE) {
+      return true;
+    }
+    if (turnPriorityFrames <= 0 || chunkDistance > TURN_PRIORITY_LOADED_CHUNK_RANGE) {
+      return false;
+    }
+    return isInForwardPriorityCone(dx, dz);
+  }
+
+  private boolean isInForwardPriorityCone(int dx, int dz) {
+    float forwardDot = dx * cachedForwardX + dz * cachedForwardZ;
+    if (forwardDot <= 0.0f) {
+      return false;
+    }
+    float distSq = (dx * dx) + (dz * dz);
+    float minForwardDotSq = TURN_PRIORITY_SCAN_COS_THRESHOLD * TURN_PRIORITY_SCAN_COS_THRESHOLD;
+    return forwardDot * forwardDot >= distSq * minForwardDotSq;
+  }
+
+  private boolean isImportantPendingBuild(int dx, int dz, int chunkDist) {
+    if (chunkDist <= IMPORTANT_REBUILD_CHUNK_RANGE) {
+      return true;
+    }
+    return turnPriorityFrames > 0
+        && chunkDist <= TURN_PRIORITY_LOADED_CHUNK_RANGE
+        && isInForwardPriorityCone(dx, dz);
+  }
+
+  private boolean isSectionBuildReady(ClientLevel world, int chunkX, int chunkY,
+      int chunkZ) {
+    LevelChunk centerChunk = world.getChunkSource().getChunkNow(chunkX, chunkZ);
+    if (centerChunk == null) {
+      return false;
+    }
+    if (world.getChunkSource().getChunkNow(chunkX - 1, chunkZ) == null) {
+      return false;
+    }
+    if (world.getChunkSource().getChunkNow(chunkX + 1, chunkZ) == null) {
+      return false;
+    }
+    if (world.getChunkSource().getChunkNow(chunkX, chunkZ - 1) == null) {
+      return false;
+    }
+    return world.getChunkSource().getChunkNow(chunkX, chunkZ + 1) != null;
+  }
+
+  private void enqueueSectionBuild(int chunkX, int worldY, int chunkZ) {
+    if (!chunkMesher.hasMesh(chunkX, worldY, chunkZ)) {
+      if (pendingBuildSet.add(packChunkKey(chunkX, worldY, chunkZ))) {
+        sortedListDirty = true;
+>>>>>>> 62d2482 (optimisation for high-rend scenes with tons of chunks. also fixed chunk loading speeds)
       }
     }
   }

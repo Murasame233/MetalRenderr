@@ -1,11 +1,20 @@
 package com.pebbles_boon.metalrender.sodium.mixins;
 
 import com.pebbles_boon.metalrender.MetalRenderClient;
+import com.pebbles_boon.metalrender.StartupBlocker;
 import com.pebbles_boon.metalrender.performance.PerformanceController;
+import com.pebbles_boon.metalrender.gui.StartupBlockerOverlay;
 import com.pebbles_boon.metalrender.render.MetalWorldRenderer;
 import com.pebbles_boon.metalrender.util.MetalLogger;
+<<<<<<< HEAD
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.world.ClientWorld;
+=======
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.Overlay;
+import net.minecraft.client.main.GameConfig;
+import net.minecraft.client.multiplayer.ClientLevel;
+>>>>>>> 62d2482 (optimisation for high-rend scenes with tons of chunks. also fixed chunk loading speeds)
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
@@ -19,6 +28,36 @@ public class MinecraftClientMixin {
   private boolean metalrender$worldWasLoaded = false;
   @Unique
   private int metalrender$debugCounter = 0;
+  @Unique
+  private boolean metalrender$forcingStartupBlocker;
+
+  @Inject(method = "<init>", at = @At("TAIL"))
+  private void metalrender$showStartupBlocker(GameConfig config,
+      CallbackInfo ci) {
+    if (StartupBlocker.shouldBlockStartup()) {
+      metalrender$forceStartupBlocker();
+    }
+  }
+
+  @Inject(method = "setOverlay", at = @At("HEAD"), cancellable = true)
+  private void metalrender$blockStartupOverlays(Overlay overlay,
+      CallbackInfo ci) {
+    if (StartupBlocker.shouldBlockStartup() && !metalrender$forcingStartupBlocker
+        && !(overlay instanceof StartupBlockerOverlay)) {
+      metalrender$forceStartupBlocker();
+      ci.cancel();
+    }
+  }
+
+  @Unique
+  private void metalrender$forceStartupBlocker() {
+    metalrender$forcingStartupBlocker = true;
+    try {
+      ((Minecraft) (Object) this).setOverlay(new StartupBlockerOverlay());
+    } finally {
+      metalrender$forcingStartupBlocker = false;
+    }
+  }
 
   @Inject(method = "render", at = @At("HEAD"))
   private void metalrender$startFrame(boolean tick, CallbackInfo ci) {
