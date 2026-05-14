@@ -34,6 +34,9 @@ public class MetalRenderClient implements ClientModInitializer {
 
   @Override
   public void onInitializeClient() {
+    if (StartupBlocker.shouldBlockStartup()) {
+      return;
+    }
     instance = this;
     MetalLogger.info("MetalRender v0.1.7ing...");
     config = MetalRenderConfig.load();

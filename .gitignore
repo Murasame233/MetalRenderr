@@ -32,3 +32,5 @@ compile_commands.json
 /work files/
 *.txt
 *.out
+/extracted_sources/
+
