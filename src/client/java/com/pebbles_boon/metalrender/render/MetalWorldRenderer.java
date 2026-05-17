@@ -37,12 +37,12 @@ public class MetalWorldRenderer {
   private static final int DEFAULT_MAX_MESHES = 65536;
   private static final int PINNED_RENDER_DISTANCE = 32;
   private static final int PINNED_MAX_MESHES = 131072;
-  private static final long CHUNK_BUILD_BUDGET_NS = 3_000_000L;
-  private static final int MIN_CHUNK_BUILDS_PER_FRAME = 6;
+  private static final long CHUNK_BUILD_BUDGET_NS = 4_500_000L;
+  private static final int MIN_CHUNK_BUILDS_PER_FRAME = 10;
   private static final int CHUNK_BACKLOG_PRESSURE_THRESHOLD = 384;
   private static final int CHUNK_BACKLOG_HEAVY_THRESHOLD = 1024;
-  private static final int CHUNK_SCAN_PRESSURE_THRESHOLD = 2048;
-  private static final int CHUNK_SCAN_SATURATED_THRESHOLD = 8192;
+  private static final int CHUNK_SCAN_PRESSURE_THRESHOLD = 4096;
+  private static final int CHUNK_SCAN_SATURATED_THRESHOLD = 12288;
   private static final long CHUNK_BACKLOG_BUILD_BURST_NS = 8_000_000L;
   private static final int MIN_CHUNK_BACKLOG_BUILDS_PER_FRAME = 24;
   private static final long CHUNK_HEAVY_BACKLOG_BUILD_BURST_NS = 12_000_000L;
@@ -60,10 +60,17 @@ public class MetalWorldRenderer {
   private static final int WAIT_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 8;
   private static final int SATURATED_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 2;
   private static final int PRIORITIZED_BUILD_STREAK_LIMIT = 2;
-  private static final int MAX_IN_FLIGHT_BUILD_TASKS = 96;
-  private static final int RESERVED_PRIORITY_IN_FLIGHT_SLOTS = 48;
+  private static final int MAX_IN_FLIGHT_BUILD_TASKS = 192;
+  private static final int RESERVED_PRIORITY_IN_FLIGHT_SLOTS = 64;
+  private static final int FPS_PRIORITY_MAX_IN_FLIGHT_BUILD_TASKS = 192;
+  private static final int FPS_PRIORITY_LOADING_BACKGROUND_SUBMISSIONS_PER_PASS = 128;
+  private static final int FPS_PRIORITY_NORMAL_BACKGROUND_SUBMISSIONS_PER_PASS = 96;
   private static final long CHUNK_BUILD_WAIT_WINDOW_NS = 3_000_000L;
   private static final int HIGH_PRIORITY_LOADED_VERTICAL_RANGE = 3;
+  private static final int MID_DISTANCE_SCAN_VERTICAL_RANGE = 8;
+  private static final int FAR_DISTANCE_SCAN_VERTICAL_RANGE = 5;
+  private static final int EXTREME_DISTANCE_SCAN_VERTICAL_RANGE = 3;
+  private static final int SURFACE_SECTION_EXTRA_DEPTH = 2;
   private static final int TURN_PRIORITY_LOADED_CHUNK_RANGE = 24;
   private static final float BUILD_SORT_REORDER_DOT_THRESHOLD = 0.9848f;
   private static final int TURN_PRIORITY_SCAN_FRAMES = 12;
@@ -74,18 +81,28 @@ public class MetalWorldRenderer {
   private static final int INTERACTIVE_PRIORITY_CHUNK_RANGE = 6;
   private static final int INTERACTIVE_PRIORITY_SUBMISSIONS_PER_PASS = 8;
   private static final int MAX_INTERACTIVE_PRIORITY_QUEUE_DEPTH = 16;
-  private static final int LOADING_BACKGROUND_SUBMISSIONS_PER_PASS = 32;
+  private static final int LOADING_BACKGROUND_SUBMISSIONS_PER_PASS = 96;
   private static final int TURN_PRIORITY_BACKGROUND_SUBMISSIONS_PER_PASS = 16;
-  private static final int NORMAL_BACKGROUND_SUBMISSIONS_PER_PASS = 48;
-  private static final int ACTIVE_CLOSE_RANGE_RESCAN_INTERVAL = 2;
-  private static final int IDLE_CLOSE_RANGE_RESCAN_INTERVAL = 6;
+  private static final int NORMAL_BACKGROUND_SUBMISSIONS_PER_PASS = 72;
+  private static final int ACTIVE_CLOSE_RANGE_RESCAN_INTERVAL = 3;
+  private static final int IDLE_CLOSE_RANGE_RESCAN_INTERVAL = 8;
   private static final int HOT_LOAD_REBUILD_RANGE = 12;
-  private static final int STARTUP_SOLID_FILL_MESH_THRESHOLD = 1536;
+  private static final int STARTUP_SOLID_FILL_MESH_THRESHOLD = 3072;
+  private static final int LOADING_FRONTIER_RING_SCAN_SPAN = 12;
+  private static final int NORMAL_FRONTIER_RING_SCAN_SPAN = 6;
+  private static final int DISTANCE_DETAIL_TIER1_START = 8;
+  private static final int DISTANCE_DETAIL_TIER2_START = 16;
+  private static final int DISTANCE_DETAIL_TIER3_START = 24;
+  private static final int DISTANCE_DETAIL_TIER4_START = 30;
+  private static final int DETAIL_TIER_REBUILD_FRAME_INTERVAL = 2;
+  private static final long DETAIL_TIER_REBUILD_BUDGET_NS = 1_500_000L;
+  private static final int DETAIL_TIER_REBUILD_SCAN_LIMIT = 1024;
+  private static final int DETAIL_TIER_REBUILD_MAX_PER_PASS = 12;
   private static final int PRESSURED_CLOSE_SCAN_RANGE = 6;
   private static final int SATURATED_CLOSE_SCAN_RANGE = 4;
-  private static final long FULL_RENDERDIST_RESCAN_INTERVAL_NS = 1_500_000_000L;
+  private static final long FULL_RENDERDIST_RESCAN_INTERVAL_NS = 3_000_000_000L;
   private static final int TEXTURE_SYNC_PRESSURE_THRESHOLD = 64;
-  private static final int PRESSURED_ATLAS_SYNC_FRAME_INTERVAL = 12;
+  private static final int PRESSURED_ATLAS_SYNC_FRAME_INTERVAL = 2;
   private static final int PRESSURED_LIGHTMAP_SYNC_FRAME_INTERVAL = 8;
   private static final int JAVA_PROFILE_EMIT_INTERVAL = 240;
   private static volatile java.lang.reflect.Field skyLightFactorField;
@@ -132,6 +149,7 @@ public class MetalWorldRenderer {
   private boolean loadingMode;
   private int loadingModePendingCount;
   private int loadingModeMeshCount;
+  private int screenshotBlitCooldownFrames;
 
   public MetalWorldRenderer() {
     this.frustumCuller = new FrustumCuller();
@@ -638,6 +656,8 @@ public class MetalWorldRenderer {
       boolean startupSolidFill = loadingMode && loadingModeMeshCount < STARTUP_SOLID_FILL_MESH_THRESHOLD;
       int mesherPending = chunkMesher.getPendingCount();
       int visibleBacklog = pendingBuildSet.size() + mesherPending;
+      boolean fpsPriorityMode = MetalRenderClient.getConfig() != null
+          && MetalRenderClient.getConfig().prioritizeFpsOverTps;
       long buildBudget = turnBurstActive ? CHUNK_TURN_BUILD_BURST_NS : CHUNK_BUILD_BUDGET_NS;
       int minBuilds = turnBurstActive ? MIN_CHUNK_TURN_BUILDS_PER_FRAME : MIN_CHUNK_BUILDS_PER_FRAME;
       int highPrioritySubmissions = turnBurstActive
@@ -665,6 +685,15 @@ public class MetalWorldRenderer {
         highPrioritySubmissions = Math.max(highPrioritySubmissions,
             BACKLOG_HIGH_PRIORITY_SUBMISSIONS_PER_PASS);
       }
+      if (fpsPriorityMode) {
+        buildBudget = Math.max(buildBudget,
+            loadingMode ? CHUNK_HEAVY_BACKLOG_BUILD_BURST_NS : CHUNK_BACKLOG_BUILD_BURST_NS);
+        minBuilds = Math.max(minBuilds,
+            loadingMode ? MIN_CHUNK_HEAVY_BACKLOG_BUILDS_PER_FRAME : MIN_CHUNK_BACKLOG_BUILDS_PER_FRAME);
+        highPrioritySubmissions = Math.max(highPrioritySubmissions,
+            loadingMode ? HEAVY_BACKLOG_HIGH_PRIORITY_SUBMISSIONS_PER_PASS
+                : BACKLOG_HIGH_PRIORITY_SUBMISSIONS_PER_PASS);
+      }
       buildFromPendingSet(
           playerChunkX,
           playerSectionY,
@@ -672,6 +701,12 @@ public class MetalWorldRenderer {
           buildBudget,
           minBuilds,
           highPrioritySubmissions);
+      if (!loadingMode
+          && pendingBuildSet.size() <= DETAIL_TIER_REBUILD_SCAN_LIMIT / 2
+          && chunkMesher.getPendingCount() <= DETAIL_TIER_REBUILD_MAX_PER_PASS
+          && frameCount % DETAIL_TIER_REBUILD_FRAME_INTERVAL == 0) {
+        rebuildLodMeshes(mc);
+      }
       if (turnPriorityFrames > 0) {
         turnPriorityFrames--;
       }
@@ -691,6 +726,7 @@ public class MetalWorldRenderer {
     int renderDist = mc.options.renderDistance().get();
     int mesherPending = chunkMesher.getPendingCount();
     int visibleBacklog = pendingBuildSet.size() + mesherPending;
+    boolean coverageFillActive = loadingMode;
     boolean scanPressured = visibleBacklog >= CHUNK_SCAN_PRESSURE_THRESHOLD;
     boolean scanSaturated = visibleBacklog >= CHUNK_SCAN_SATURATED_THRESHOLD;
     int closeRange = Math.min(HOT_LOAD_REBUILD_RANGE, renderDist);
@@ -701,7 +737,8 @@ public class MetalWorldRenderer {
     }
     int playerChunkX = mc.player.chunkPosition().x();
     int playerChunkZ = mc.player.chunkPosition().z();
-    if (scanPressured) {
+    int playerSectionY = mc.player.getBlockY() >> 4;
+    if (scanPressured && !coverageFillActive) {
       trimPendingBuildSet(playerChunkX, playerChunkZ, closeRange);
       visibleBacklog = pendingBuildSet.size() + mesherPending;
       scanPressured = visibleBacklog >= CHUNK_SCAN_PRESSURE_THRESHOLD;
@@ -715,13 +752,16 @@ public class MetalWorldRenderer {
       lastScanPlayerCZ = playerChunkZ;
       lastScanRenderDist = renderDist;
       sortedListDirty = true;
+      lodScanOffset = 0;
       if (renderDistChanged) {
         pendingBuildSet.clear();
-        scanRingsInRange(world, playerChunkX, playerChunkZ, 0, closeRange);
+        scanRingsInRange(world, playerChunkX, playerChunkZ, playerSectionY, 0,
+            closeRange);
         scanFrontierRing = closeRange + 1;
         scanFrameCounter = 0;
       } else {
-        scanRingsInRange(world, playerChunkX, playerChunkZ, 0, closeRange);
+        scanRingsInRange(world, playerChunkX, playerChunkZ, playerSectionY, 0,
+            closeRange);
         scanFrontierRing = closeRange + 1;
       }
     }
@@ -730,7 +770,8 @@ public class MetalWorldRenderer {
         || nowNs - lastFullRescanNs >= FULL_RENDERDIST_RESCAN_INTERVAL_NS;
     scanFrameCounter++;
     if (fullRescanDue) {
-      scanRingsInRange(world, playerChunkX, playerChunkZ, 0, closeRange);
+      scanRingsInRange(world, playerChunkX, playerChunkZ, playerSectionY, 0,
+          closeRange);
       lastFullRescanNs = nowNs;
       scanFrameCounter = 0;
       scanFrontierRing = closeRange + 1;
@@ -740,26 +781,30 @@ public class MetalWorldRenderer {
           ? ACTIVE_CLOSE_RANGE_RESCAN_INTERVAL
           : IDLE_CLOSE_RANGE_RESCAN_INTERVAL;
       if (!playerMovedChunk && scanFrameCounter % closeRangeRescanInterval == 0) {
-        scanRingsInRange(world, playerChunkX, playerChunkZ, 0, closeRange);
+        scanRingsInRange(world, playerChunkX, playerChunkZ, playerSectionY, 0,
+            closeRange);
       }
       int frontierStart = Math.max(closeRange + 1, scanFrontierRing);
-      int frontierEnd = Math.min(frontierStart + 8, renderDist);
-      if (!scanPressured && frontierStart <= renderDist) {
-        scanForwardSector(world, playerChunkX, playerChunkZ, frontierStart, frontierEnd);
+      int frontierSpan = coverageFillActive ? LOADING_FRONTIER_RING_SCAN_SPAN : NORMAL_FRONTIER_RING_SCAN_SPAN;
+      int frontierEnd = Math.min(frontierStart + frontierSpan - 1, renderDist);
+      if (frontierStart <= renderDist && (coverageFillActive || !scanPressured)) {
+        scanRingsInRange(world, playerChunkX, playerChunkZ, playerSectionY,
+            frontierStart, frontierEnd);
         scanFrontierRing = frontierEnd + 1;
         if (scanFrontierRing > renderDist) {
           scanFrontierRing = closeRange + 1;
         }
       }
     }
-    if (turnPriorityFrames > 0 && !scanPressured) {
-      scanForwardSector(world, playerChunkX, playerChunkZ, renderDist);
+    if (turnPriorityFrames > 0 && !coverageFillActive && !scanPressured) {
+      scanForwardSector(world, playerChunkX, playerChunkZ, playerSectionY,
+          renderDist);
     }
     logServerChunkAvailability(world, playerChunkX, playerChunkZ, renderDist);
   }
 
-  private void scanRingsInRange(ClientLevel world, int playerChunkX, int playerChunkZ,
-      int startRing, int endRing) {
+  private void scanRingsInRange(ClientLevel world, int playerChunkX,
+      int playerChunkZ, int playerSectionY, int startRing, int endRing) {
     for (int ring = startRing; ring <= endRing; ring++) {
       for (int dx = -ring; dx <= ring; dx++) {
         for (int dz = -ring; dz <= ring; dz++) {
@@ -767,20 +812,22 @@ public class MetalWorldRenderer {
             continue;
           int cx = playerChunkX + dx;
           int cz = playerChunkZ + dz;
-          queueChunkSectionsIfMissing(world, cx, cz);
+          queueChunkSectionsIfMissing(world, cx, cz, playerSectionY,
+              Math.max(Math.abs(dx), Math.abs(dz)));
         }
       }
     }
   }
 
   private void scanForwardSector(ClientLevel world, int playerChunkX, int playerChunkZ,
-      int renderDist) {
+      int playerSectionY, int renderDist) {
     int startRing = Math.min(HOT_LOAD_REBUILD_RANGE, renderDist) + 1;
-    scanForwardSector(world, playerChunkX, playerChunkZ, startRing, renderDist);
+    scanForwardSector(world, playerChunkX, playerChunkZ, playerSectionY,
+        startRing, renderDist);
   }
 
   private void scanForwardSector(ClientLevel world, int playerChunkX, int playerChunkZ,
-      int startRing, int endRing) {
+      int playerSectionY, int startRing, int endRing) {
     float minForwardDotSq = TURN_PRIORITY_SCAN_COS_THRESHOLD * TURN_PRIORITY_SCAN_COS_THRESHOLD;
     for (int ring = startRing; ring <= endRing; ring++) {
       for (int dx = -ring; dx <= ring; dx++) {
@@ -799,7 +846,8 @@ public class MetalWorldRenderer {
           if (forwardDot * forwardDot < distSq * minForwardDotSq) {
             continue;
           }
-          queueChunkSectionsIfMissing(world, playerChunkX + dx, playerChunkZ + dz);
+          queueChunkSectionsIfMissing(world, playerChunkX + dx,
+              playerChunkZ + dz, playerSectionY, ring);
         }
       }
     }
@@ -829,16 +877,49 @@ public class MetalWorldRenderer {
     }
   }
 
-  private void queueChunkSectionsIfMissing(ClientLevel world, int chunkX, int chunkZ) {
+  private int getScanVerticalRange(int chunkDistance) {
+    if (chunkDistance <= HOT_LOAD_REBUILD_RANGE) {
+      return Integer.MAX_VALUE;
+    }
+    if (chunkDistance < DISTANCE_DETAIL_TIER2_START) {
+      return MID_DISTANCE_SCAN_VERTICAL_RANGE;
+    }
+    if (chunkDistance < DISTANCE_DETAIL_TIER3_START) {
+      return FAR_DISTANCE_SCAN_VERTICAL_RANGE;
+    }
+    return EXTREME_DISTANCE_SCAN_VERTICAL_RANGE;
+  }
+
+  private void queueChunkSectionsIfMissing(ClientLevel world, int chunkX,
+      int chunkZ, int playerSectionY, int chunkDistance) {
     LevelChunk chunk = world.getChunkSource().getChunkNow(chunkX, chunkZ);
     if (chunk == null)
       return;
     LevelChunkSection[] sections = chunk.getSections();
+    int maxVerticalRange = getScanVerticalRange(chunkDistance);
+    int highestNonAirSection = Integer.MIN_VALUE;
+    if (maxVerticalRange != Integer.MAX_VALUE) {
+      for (int sy = sections.length - 1; sy >= 0; sy--) {
+        LevelChunkSection section = sections[sy];
+        if (section != null && !section.hasOnlyAir()) {
+          highestNonAirSection = chunk.getSectionYFromSectionIndex(sy);
+          break;
+        }
+      }
+    }
     for (int sy = 0; sy < sections.length; sy++) {
       LevelChunkSection section = sections[sy];
       if (section == null || section.hasOnlyAir())
         continue;
       int worldY = chunk.getSectionYFromSectionIndex(sy);
+      if (maxVerticalRange != Integer.MAX_VALUE) {
+        boolean withinVerticalWindow = Math.abs(worldY - playerSectionY) <= maxVerticalRange;
+        boolean withinSurfaceBand = highestNonAirSection != Integer.MIN_VALUE
+            && worldY >= highestNonAirSection - SURFACE_SECTION_EXTRA_DEPTH;
+        if (!withinVerticalWindow && !withinSurfaceBand) {
+          continue;
+        }
+      }
       if (!chunkMesher.hasMesh(chunkX, worldY, chunkZ)) {
         chunkMesher.noteSectionAvailable(chunkX, worldY, chunkZ);
         if (pendingBuildSet.add(packChunkKey(chunkX, worldY, chunkZ))) {
@@ -963,17 +1044,28 @@ public class MetalWorldRenderer {
     int built = 0;
     int importantSubmitted = 0;
     int backgroundSubmissions = 0;
+    boolean fpsPriorityMode = MetalRenderClient.getConfig() != null
+        && MetalRenderClient.getConfig().prioritizeFpsOverTps;
+    int maxInFlightBuildTasks = fpsPriorityMode
+        ? FPS_PRIORITY_MAX_IN_FLIGHT_BUILD_TASKS
+        : MAX_IN_FLIGHT_BUILD_TASKS;
     int backgroundInFlightLimit = Math.max(1,
-        MAX_IN_FLIGHT_BUILD_TASKS - RESERVED_PRIORITY_IN_FLIGHT_SLOTS);
+        maxInFlightBuildTasks - RESERVED_PRIORITY_IN_FLIGHT_SLOTS);
     int backgroundSubmissionBudget = loadingMode
         ? LOADING_BACKGROUND_SUBMISSIONS_PER_PASS
         : (turnPriorityFrames > 0 ? TURN_PRIORITY_BACKGROUND_SUBMISSIONS_PER_PASS
             : NORMAL_BACKGROUND_SUBMISSIONS_PER_PASS);
+    if (fpsPriorityMode) {
+      backgroundInFlightLimit = maxInFlightBuildTasks;
+      backgroundSubmissionBudget = Math.max(backgroundSubmissionBudget,
+          loadingMode ? FPS_PRIORITY_LOADING_BACKGROUND_SUBMISSIONS_PER_PASS
+              : FPS_PRIORITY_NORMAL_BACKGROUND_SUBMISSIONS_PER_PASS);
+    }
     while (!sortedBuildList.isEmpty() && built < maxSubmit
         && chunkMesher.getMeshCount() < maxMeshes) {
       if (budgetNanos > 0 && built >= minBuilds && System.nanoTime() >= deadline)
         break;
-      if (chunkMesher.getPendingCount() >= MAX_IN_FLIGHT_BUILD_TASKS) {
+      if (chunkMesher.getPendingCount() >= maxInFlightBuildTasks) {
         break;
       }
       PendingBuildCandidate importantCandidate = null;
@@ -992,12 +1084,14 @@ public class MetalWorldRenderer {
         int dx = cx - playerChunkX;
         int dz = cz - playerChunkZ;
         int chunkDist = Math.max(Math.abs(dx), Math.abs(dz));
-        boolean bypassReadiness = chunkDist <= IMPORTANT_REBUILD_CHUNK_RANGE;
+        int lodLevel = getDistanceDetailTier(chunkDist);
+        boolean bypassReadiness = chunkDist <= IMPORTANT_REBUILD_CHUNK_RANGE
+            || (loadingMode && chunkDist <= HOT_LOAD_REBUILD_RANGE)
+            || lodLevel > 0;
         if (!bypassReadiness && !isSectionBuildReady(world, cx, cy, cz)) {
           index++;
           continue;
         }
-        int lodLevel = com.pebbles_boon.metalrender.config.MetalRenderConfig.getLodLevel(chunkDist);
         PendingBuildCandidate candidate = new PendingBuildCandidate(key, index,
             cx, cy, cz, chunkDist, lodLevel);
         boolean importantBuild = importantSubmitted < highPrioritySubmissions
@@ -1077,11 +1171,22 @@ public class MetalWorldRenderer {
   private void rebuildLodMeshes(Minecraft mc) {
     if (mc.player == null || mc.level == null)
       return;
+    if (loadingMode || pendingBuildSet.size() > DETAIL_TIER_REBUILD_SCAN_LIMIT / 2) {
+      return;
+    }
+    boolean fpsPriorityMode = MetalRenderClient.getConfig() != null
+        && MetalRenderClient.getConfig().prioritizeFpsOverTps;
+    int maxInFlightBuildTasks = fpsPriorityMode
+        ? FPS_PRIORITY_MAX_IN_FLIGHT_BUILD_TASKS
+        : MAX_IN_FLIGHT_BUILD_TASKS;
+    if (chunkMesher.getPendingCount() >= maxInFlightBuildTasks) {
+      return;
+    }
     int playerChunkX = mc.player.chunkPosition().x();
     int playerChunkZ = mc.player.chunkPosition().z();
     int rebuilt = 0;
-    long deadline = System.nanoTime() + 2_000_000L;
-    int maxScansPerPass = 2048;
+    long deadline = System.nanoTime() + DETAIL_TIER_REBUILD_BUDGET_NS;
+    int maxScansPerPass = DETAIL_TIER_REBUILD_SCAN_LIMIT;
     int scanned = 0;
     var allMeshes = chunkMesher.getAllMeshes();
     if (allMeshes.isEmpty())
@@ -1093,6 +1198,8 @@ public class MetalWorldRenderer {
       skip--;
     }
     while (iter.hasNext() && scanned < maxScansPerPass) {
+      if (rebuilt >= DETAIL_TIER_REBUILD_MAX_PER_PASS)
+        break;
       if (rebuilt > 0 && System.nanoTime() >= deadline)
         break;
       CustomChunkMesher.ChunkMeshData mesh = iter.next();
@@ -1100,8 +1207,7 @@ public class MetalWorldRenderer {
       int dx = mesh.chunkX - playerChunkX;
       int dz = mesh.chunkZ - playerChunkZ;
       int chunkDist = Math.max(Math.abs(dx), Math.abs(dz));
-      int desiredLod = com.pebbles_boon.metalrender.config.MetalRenderConfig
-          .getLodLevel(chunkDist);
+      int desiredLod = getDistanceDetailTier(chunkDist);
       if (chunkMesher.needsLodRebuild(mesh.chunkX, mesh.chunkY, mesh.chunkZ,
           desiredLod)) {
         chunkMesher.buildMeshFromWorld(mesh.chunkX, mesh.chunkY, mesh.chunkZ,
@@ -1190,7 +1296,7 @@ public class MetalWorldRenderer {
   }
 
   public static boolean shouldBlitAt(String timingPoint) {
-    return "flip_head".equals(timingPoint);
+    return "flip_head".equals(timingPoint) || "before_hand".equals(timingPoint);
   }
 
   private boolean shouldPinLoadedMeshes(Minecraft mc) {
@@ -1202,6 +1308,9 @@ public class MetalWorldRenderer {
   }
 
   public void forceBlitNow() {
+    if (shouldSuspendBlitForScreenshot()) {
+      return;
+    }
     MetalRenderer renderer = MetalRenderClient.getRenderer();
     if (renderer == null || !renderer.isAvailable())
       return;
@@ -1220,6 +1329,22 @@ public class MetalWorldRenderer {
     } else {
       ioSurfaceBlitter.blit(handle);
     }
+  }
+
+  private boolean shouldSuspendBlitForScreenshot() {
+    Minecraft mc = Minecraft.getInstance();
+    if (mc == null || mc.options == null || mc.options.keyScreenshot == null) {
+      return false;
+    }
+    if (mc.options.keyScreenshot.isDown()) {
+      screenshotBlitCooldownFrames = 4;
+      return true;
+    }
+    if (screenshotBlitCooldownFrames > 0) {
+      screenshotBlitCooldownFrames--;
+      return true;
+    }
+    return false;
   }
 
   public void forceBlitDepthNow(int width, int height) {
@@ -1307,8 +1432,10 @@ public class MetalWorldRenderer {
     if (mc != null && mc.player != null && mc.level != null) {
       int playerChunkX = mc.player.chunkPosition().x();
       int playerChunkZ = mc.player.chunkPosition().z();
+      int playerSectionY = mc.player.getBlockY() >> 4;
       int renderDist = mc.options.renderDistance().get();
-      scanRingsInRange(mc.level, playerChunkX, playerChunkZ, 0, renderDist);
+      scanRingsInRange(mc.level, playerChunkX, playerChunkZ, playerSectionY, 0,
+          renderDist);
     }
     updateLoadingModeState();
   }
@@ -1366,7 +1493,36 @@ public class MetalWorldRenderer {
       refreshLoadedNeighborSection(chunkX, worldY, chunkZ - 1);
       refreshLoadedNeighborSection(chunkX, worldY, chunkZ + 1);
     }
+    requeueNeighboursNowReady(mc, chunkX - 1, chunkZ);
+    requeueNeighboursNowReady(mc, chunkX + 1, chunkZ);
+    requeueNeighboursNowReady(mc, chunkX, chunkZ - 1);
+    requeueNeighboursNowReady(mc, chunkX, chunkZ + 1);
     updateLoadingModeState();
+  }
+
+  private void requeueNeighboursNowReady(Minecraft mc, int chunkX, int chunkZ) {
+    if (mc == null || mc.level == null || mc.player == null) {
+      return;
+    }
+    LevelChunk chunk = mc.level.getChunkSource().getChunkNow(chunkX, chunkZ);
+    if (chunk == null) {
+      return;
+    }
+    LevelChunkSection[] sections = chunk.getSections();
+    for (int sy = 0; sy < sections.length; sy++) {
+      LevelChunkSection section = sections[sy];
+      if (section == null || section.hasOnlyAir()) {
+        continue;
+      }
+      int worldY = chunk.getSectionYFromSectionIndex(sy);
+      if (!chunkMesher.hasMesh(chunkX, worldY, chunkZ)
+          && isSectionBuildReady(mc.level, chunkX, worldY, chunkZ)) {
+        chunkMesher.noteSectionAvailable(chunkX, worldY, chunkZ);
+        if (pendingBuildSet.add(packChunkKey(chunkX, worldY, chunkZ))) {
+          sortedListDirty = true;
+        }
+      }
+    }
   }
 
   private boolean shouldPrioritizeLoadedChunk(int chunkX, int chunkZ) {
@@ -1404,6 +1560,19 @@ public class MetalWorldRenderer {
     return turnPriorityFrames > 0
         && chunkDist <= TURN_PRIORITY_LOADED_CHUNK_RANGE
         && isInForwardPriorityCone(dx, dz);
+  }
+
+  private static int getDistanceDetailTier(int chunkDist) {
+    if (chunkDist >= DISTANCE_DETAIL_TIER4_START) {
+      return 4;
+    }
+    if (chunkDist >= DISTANCE_DETAIL_TIER3_START) {
+      return 3;
+    }
+    if (chunkDist >= DISTANCE_DETAIL_TIER1_START) {
+      return 2;
+    }
+    return 0;
   }
 
   private boolean isSectionBuildReady(ClientLevel world, int chunkX, int chunkY,
@@ -1450,27 +1619,12 @@ public class MetalWorldRenderer {
     chunkMesher.noteBlockUpdate(cx, cy, cz);
     chunkMesher.markDirty(cx, cy, cz);
     chunkMesher.buildMeshFromWorldInteractive(cx, cy, cz);
-    int localX = blockX & 15;
-    int localY = blockY & 15;
-    int localZ = blockZ & 15;
-    if (localX == 0) {
-      markDirtyAndQueue(cx - 1, cy, cz);
-    }
-    if (localX == 15) {
-      markDirtyAndQueue(cx + 1, cy, cz);
-    }
-    if (localY == 0) {
-      markDirtyAndQueue(cx, cy - 1, cz);
-    }
-    if (localY == 15) {
-      markDirtyAndQueue(cx, cy + 1, cz);
-    }
-    if (localZ == 0) {
-      markDirtyAndQueue(cx, cy, cz - 1);
-    }
-    if (localZ == 15) {
-      markDirtyAndQueue(cx, cy, cz + 1);
-    }
+    markDirtyAndQueue(cx - 1, cy, cz);
+    markDirtyAndQueue(cx + 1, cy, cz);
+    markDirtyAndQueue(cx, cy - 1, cz);
+    markDirtyAndQueue(cx, cy + 1, cz);
+    markDirtyAndQueue(cx, cy, cz - 1);
+    markDirtyAndQueue(cx, cy, cz + 1);
     updateLoadingModeState();
   }
 

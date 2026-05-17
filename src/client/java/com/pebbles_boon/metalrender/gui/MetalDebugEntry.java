@@ -26,7 +26,7 @@ import org.jspecify.annotations.Nullable;
 public final class MetalDebugEntry implements DebugScreenEntry {
   private static final Identifier DBG_GRP = Identifier.fromNamespaceAndPath("metalrender", "debug_group");
   private static final Identifier DBG_ID = Identifier.fromNamespaceAndPath("metalrender", "debug");
-  private static final String ACTIVE_LINE = "MetalRender rendering, v[VERSION]";
+  private static final String ACTIVE_LINE = "%sMetalRender %s rendering";
   private static final String[] DEATH_TPL = {
       "MetalRender was pricked to death",
       "MetalRender Was Impaled On A Stalagmite whilst trying to escape [PlayerName]'s world",
@@ -34,7 +34,8 @@ public final class MetalDebugEntry implements DebugScreenEntry {
       "MetalRender Walked into a Danger Zone due to [PlayerName]",
       "MetalRender is grinding coffee beans",
       "MetalRender was slain by Bloffo using Fancy Stick",
-      "MetalRender drank a Concoction"
+      "MetalRender drank a Concoction",
+      "bloffo slain MetalRender using fancy stick"
   };
 
   private static boolean wasOn = true;
@@ -47,7 +48,7 @@ public final class MetalDebugEntry implements DebugScreenEntry {
       reg.put(DBG_ID, new MetalDebugEntry());
       reg.put(DebugScreenEntries.SYSTEM_SPECS, new SysSpecEntry());
     } catch (ReflectiveOperationException err) {
-      MetalLogger.error("Failed to register MetalRender debug entry", err);
+      MetalLogger.error("fail to get metalrender easter egg", err);
     }
   }
 
@@ -74,7 +75,7 @@ public final class MetalDebugEntry implements DebugScreenEntry {
   private static String line() {
     if (rendOn()) {
       wasOn = true;
-      return ACTIVE_LINE.replace("[VERSION]", dispVer());
+      return ACTIVE_LINE.formatted(ChatFormatting.BLUE, dispVer());
     }
 
     var plyr = plyrName();

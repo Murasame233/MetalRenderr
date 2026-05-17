@@ -18,6 +18,7 @@ import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
 
 public class MetalRenderClient implements ClientModInitializer {
+  private static final int FPS_PRIORITY_SIMULATION_DISTANCE = 5;
   private static MetalRenderClient instance;
   private static MetalRenderer renderer;
   private static MetalRenderConfig config;
@@ -31,6 +32,7 @@ public class MetalRenderClient implements ClientModInitializer {
   private static boolean runtimeApplyPending;
   private static boolean levelRendererRefreshPending;
   private static boolean worldRendererRefreshPending;
+  private static boolean debugEntryStatusSet;
 
   @Override
   public void onInitializeClient() {
@@ -38,26 +40,30 @@ public class MetalRenderClient implements ClientModInitializer {
       return;
     }
     instance = this;
-    MetalLogger.info("MetalRender v0.1.7ing...");
+    MetalLogger.info("MetalRender can render");
     config = MetalRenderConfig.load();
     cfgWasOn = config != null && config.enableMetalRendering;
     MetalDebugEntry.register();
     if (MetalRenderConfig.isDeepDebugActive()) {
-      MetalLogger.info("Deep Debug Mode active for this run; detailed telemetry will be written to latest.log");
+      MetalLogger.info("debug logging is logging");
     }
     MetalRenderCommands.register();
     if (!config.enableMetalRendering) {
-      MetalLogger.info("MetalRender was killed by [user] using config menu");
+      MetalLogger.info("metalrender was sniped");
     }
 
     ClientTickEvents.START_CLIENT_TICK.register(client -> {
       var mc = Minecraft.getInstance();
-      MetalDebugEntry.show(mc);
+      if (!debugEntryStatusSet && mc != null) {
+        MetalDebugEntry.show(mc);
+        debugEntryStatusSet = true;
+      }
       if (cfgSyncPending) {
         cfgSyncPending = false;
         syncCfg(mc);
       }
       applyDeferredRuntimeChanges(mc);
+      applyFpsPriorityMode(mc);
       syncCfg(mc);
       if (config != null && config.enableMetalRendering && renderer == null && mc != null) {
         initMetal(mc);
@@ -139,6 +145,19 @@ public class MetalRenderClient implements ClientModInitializer {
     }
   }
 
+  private static void applyFpsPriorityMode(Minecraft mc) {
+    if (mc == null || mc.options == null || config == null || !config.prioritizeFpsOverTps) {
+      return;
+    }
+    try {
+      if (mc.options.simulationDistance().get() > FPS_PRIORITY_SIMULATION_DISTANCE) {
+        mc.options.simulationDistance().set(FPS_PRIORITY_SIMULATION_DISTANCE);
+        mc.options.save();
+      }
+    } catch (Exception ignored) {
+    }
+  }
+
   private static void drainRenderer() {
     if (renderer == null || !renderer.isAvailable() || !NativeBridge.isLibLoaded()) {
       return;
@@ -147,7 +166,7 @@ public class MetalRenderClient implements ClientModInitializer {
       NativeBridge.nFlushFrames();
       NativeBridge.nWaitForRender(renderer.getHandle());
     } catch (Throwable t) {
-      MetalLogger.warn("Failed to drain Metal renderer before lifecycle change: %s", t.getMessage());
+      MetalLogger.warn("failed to drain Metal renderer before lifecycle change: %s", t.getMessage());
     }
   }
 
@@ -159,7 +178,7 @@ public class MetalRenderClient implements ClientModInitializer {
       mc.execute(() -> mc.setScreen(new MetalRenderSettingsScreen(mc.screen)));
       MetalLogger.info("Opened MetalRender settings screen.");
     } catch (Exception e) {
-      MetalLogger.warn("Failed to open MetalRender settings screen: %s", e.getMessage());
+      MetalLogger.warn("failed to open MetalRender settings screen: %s", e.getMessage());
     }
   }
 

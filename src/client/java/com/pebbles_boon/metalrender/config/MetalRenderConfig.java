@@ -18,6 +18,7 @@ public final class MetalRenderConfig {
   public boolean enableTripleBuffering = true;
   public boolean enableMemoryPressureFallback = true;
   public boolean enableBurstThreadMode = false;
+  public boolean prioritizeFpsOverTps = false;
   public boolean enableMeshShaders = true;
   public boolean enableArgumentBuffers = true;
 
@@ -128,6 +129,8 @@ public final class MetalRenderConfig {
           cfg.enableMemoryPressureFallback = obj.get("enableMemoryPressureFallback").getAsBoolean();
         if (obj.has("enableBurstThreadMode"))
           cfg.enableBurstThreadMode = obj.get("enableBurstThreadMode").getAsBoolean();
+        if (obj.has("prioritizeFpsOverTps"))
+          cfg.prioritizeFpsOverTps = obj.get("prioritizeFpsOverTps").getAsBoolean();
         if (obj.has("enableMeshShaders"))
           cfg.enableMeshShaders = obj.get("enableMeshShaders").getAsBoolean();
         if (obj.has("enableArgumentBuffers"))
@@ -208,6 +211,7 @@ public final class MetalRenderConfig {
       obj.addProperty("enableTripleBuffering", enableTripleBuffering);
       obj.addProperty("enableMemoryPressureFallback", enableMemoryPressureFallback);
       obj.addProperty("enableBurstThreadMode", enableBurstThreadMode);
+      obj.addProperty("prioritizeFpsOverTps", prioritizeFpsOverTps);
       obj.addProperty("enableMeshShaders", enableMeshShaders);
       obj.addProperty("enableArgumentBuffers", enableArgumentBuffers);
       obj.addProperty("enableProgrammableBlending", enableProgrammableBlending);

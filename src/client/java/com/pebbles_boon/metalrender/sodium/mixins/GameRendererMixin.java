@@ -16,6 +16,8 @@ public abstract class GameRendererMixin {
         MetalWorldRenderer worldRenderer = MetalRenderClient.getWorldRenderer();
         if (worldRenderer == null || !worldRenderer.metalActive())
             return;
+        if (!MetalWorldRenderer.shouldBlitAt("before_hand"))
+            return;
         worldRenderer.forceBlitNow();
     }
 }

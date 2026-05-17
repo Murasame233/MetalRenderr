@@ -28,22 +28,15 @@ public class MetalTextureManager {
   private ByteBuffer lightmapPixelBuffer = null;
   public static volatile boolean atlasDirty = true;
 
-  private static final int ATLAS_MIN_UPLOAD_INTERVAL = 24;
+  private static final int ATLAS_MIN_UPLOAD_INTERVAL = 2;
   private static final int LIGHTMAP_MIN_UPLOAD_INTERVAL = 2;
   private static final long LIGHTMAP_MIN_GAME_TIME_DELTA = 4L;
-  private static final long ATLAS_DIRTY_THROTTLE_MS = 500L;
-  private static volatile long nextAtlasDirtyAtMs = 0L;
   private int atlasFramesSinceUpload = 0;
   private int lightmapFramesSinceUpload = 0;
   private long lastLightmapObservedGameTime = Long.MIN_VALUE;
   private long lastUploadedLightmapGameTime = Long.MIN_VALUE;
 
   public static void markAtlasDirty() {
-    long now = System.currentTimeMillis();
-    if (now < nextAtlasDirtyAtMs) {
-      return;
-    }
-    nextAtlasDirtyAtMs = now + ATLAS_DIRTY_THROTTLE_MS;
     atlasDirty = true;
   }
 

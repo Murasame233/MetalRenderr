@@ -451,6 +451,9 @@ public class MetalRenderSettingsScreen extends Screen {
   private void applyPending() {
     Options o = Minecraft.getInstance().options;
     o.renderDistance().set(pendingRenderDist);
+    if (config.prioritizeFpsOverTps) {
+      pendingSimDist = Math.min(pendingSimDist, 5);
+    }
     o.simulationDistance().set(pendingSimDist);
     o.framerateLimit().set(toVanillaFpsLimit(pendingMaxFps));
     o.guiScale().set(pendingGuiScale);
@@ -547,6 +550,8 @@ public class MetalRenderSettingsScreen extends Screen {
     sld("Target FPS", 30, 5000, 30, pendingTargetFps, v -> pendingTargetFps = (int) (float) v);
     tog("Triple Buffering", config.enableTripleBuffering, v -> config.enableTripleBuffering = v);
     tog("Burst Thread Mode", config.enableBurstThreadMode, v -> config.enableBurstThreadMode = v);
+    tog("Sacrifice TPS for FPS", config.prioritizeFpsOverTps, v -> config.prioritizeFpsOverTps = v);
+    nfo("FPS Priority Mode", config.prioritizeFpsOverTps ? "Simulation Distance <= 5" : "Off");
     sec("Memory");
     sld("Max GPU Memory (MB)", 512, 4096, 512, pendingMaxMemMb, v -> pendingMaxMemMb = (int) (float) v);
     tog("Memory Fallback", config.enableMemoryPressureFallback, v -> config.enableMemoryPressureFallback = v);
