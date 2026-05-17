@@ -28,7 +28,13 @@ public class MetalTextureManager {
   private ByteBuffer lightmapPixelBuffer = null;
   public static volatile boolean atlasDirty = true;
 
+<<<<<<< HEAD
   private static final int ATLAS_MIN_UPLOAD_INTERVAL = 3;
+=======
+  private static final int ATLAS_MIN_UPLOAD_INTERVAL = 2;
+  private static final int LIGHTMAP_MIN_UPLOAD_INTERVAL = 2;
+  private static final long LIGHTMAP_MIN_GAME_TIME_DELTA = 4L;
+>>>>>>> e028af4 (checkpoint, WIP)
   private int atlasFramesSinceUpload = 0;
 
   private static final int ATLAS_FALLBACK_DIRTY_INTERVAL = 4;

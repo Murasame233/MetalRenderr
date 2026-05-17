@@ -38,19 +38,11 @@ public class WorldRendererTerrainMixin {
       return false;
     }
 
-    int drawnChunks = wr.getLastDrawnChunkCount();
-    if (drawnChunks > 0) {
-      metalrender$loggedWaitingForMetalDraw = false;
-      return true;
-    }
-
     if (!metalrender$loggedWaitingForMetalDraw) {
-      MetalLogger.info(
-          "[WorldRendererTerrainMixin] Metal terrain draw stalled; restoring vanilla terrain (meshes=%d, drawn=%d)",
-          wr.getLoadingModeMeshCount(), drawnChunks);
+      MetalLogger.info("[WorldRendererTerrainMixin] Metal active; vanilla terrain suppression locked on");
       metalrender$loggedWaitingForMetalDraw = true;
     }
-    return false;
+    return true;
   }
 
   @Redirect(method = "lambda$addMainPass$0", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/chunk/ChunkSectionsToRender;renderGroup(Lnet/minecraft/client/renderer/chunk/ChunkSectionLayerGroup;Lcom/mojang/blaze3d/textures/GpuSampler;)V", ordinal = 0), require = 0)

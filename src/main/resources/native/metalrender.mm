@@ -223,10 +223,6 @@ static id<MTLRenderPipelineState> g_pipelineEntityOutline = nil;
 static id<MTLRenderPipelineState> g_pipelineEntityShadow = nil;
 static id<MTLRenderPipelineState> g_pipelineParticle = nil;
 static id<MTLRenderPipelineState> g_pipelineDebugLines = nil;
-
-static id<MTLRenderPipelineState> g_pipelineDepthOnly = nil;
-
-static id<MTLDepthStencilState> g_depthStateDepthPrePass = nil;
 id<MTLDepthStencilState> g_depthState = nil;
 static id<MTLDepthStencilState> g_depthStateNoWrite = nil;
 static id<MTLDepthStencilState> g_depthStateLessEqual = nil;
@@ -347,8 +343,7 @@ static float g_skyBrightness = 1.0f;
 
 
 struct StaleDrawCmd {
-  size_t megaOffset;
-  id<MTLBuffer> resolvedBuf;
+  uint64_t bufferHandle;
   int idxCount;
   int opaqueIdxCount;
   float ox, oy, oz;
@@ -1164,6 +1159,7 @@ fragment float4 fragment_particle(
     }
   }
 
+<<<<<<< HEAD
   {
     id<MTLFunction> depthVF =
         [g_shaderLibrary newFunctionWithName:@"vertex_depth_only"];
@@ -1191,6 +1187,8 @@ fragment float4 fragment_particle(
       dbg("WARN: vertex_depth_only shader not found\n");
     }
   }
+=======
+>>>>>>> e028af4 (checkpoint, WIP)
   auto createEntityPipeline = [&](NSString *vertName, NSString *fragName,
                                   NSString *label,
                                   bool blending) -> id<MTLRenderPipelineState> {
@@ -1302,6 +1300,7 @@ fragment float4 fragment_particle(
       [g_device newDepthStencilStateWithDescriptor:dsLessEq];
   g_depthStateReversedZReadOnly = g_depthStateLessEqual;
 
+<<<<<<< HEAD
   MTLDepthStencilDescriptor *dsPrePass =
       [[MTLDepthStencilDescriptor alloc] init];
   dsPrePass.depthCompareFunction = MTLCompareFunctionLessEqual;
@@ -1310,6 +1309,8 @@ fragment float4 fragment_particle(
       [g_device newDepthStencilStateWithDescriptor:dsPrePass];
 
 
+=======
+>>>>>>> e028af4 (checkpoint, WIP)
   MTLDepthStencilDescriptor *dsEqNoWrite =
       [[MTLDepthStencilDescriptor alloc] init];
   dsEqNoWrite.depthCompareFunction = MTLCompareFunctionEqual;
@@ -1684,7 +1685,11 @@ static void ensure_offscreen() {
                                   height:h
                                mipmapped:NO];
   oitAccumDesc.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+#if defined(__aarch64__)
+  oitAccumDesc.storageMode = MTLStorageModeMemoryless;
+#else
   oitAccumDesc.storageMode = MTLStorageModePrivate;
+#endif
   g_oitAccumTex = [g_device newTextureWithDescriptor:oitAccumDesc];
   MTLTextureDescriptor *oitRevDesc = [MTLTextureDescriptor
       texture2DDescriptorWithPixelFormat:MTLPixelFormatR8Unorm
@@ -1692,7 +1697,11 @@ static void ensure_offscreen() {
                                   height:h
                                mipmapped:NO];
   oitRevDesc.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+#if defined(__aarch64__)
+  oitRevDesc.storageMode = MTLStorageModeMemoryless;
+#else
   oitRevDesc.storageMode = MTLStorageModePrivate;
+#endif
   g_oitRevealTex = [g_device newTextureWithDescriptor:oitRevDesc];
   dbg("OIT render targets created: %dx%d (accum RGBA16F + revealage R8)\n", w,
       h);
@@ -2798,41 +2807,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
         validCount++;
       };
 
-#ifdef __aarch64__
-
-      {
-        int batchCnt = 0;
-        int bIdx[4];
-        float bOx[4], bOy[4], bOz[4];
-        for (int si = 0; si < totalActive; si++) {
-          bOx[batchCnt] = s_snapshots[si].ox;
-          bOy[batchCnt] = s_snapshots[si].oy;
-          bOz[batchCnt] = s_snapshots[si].oz;
-          bIdx[batchCnt] = si;
-          batchCnt++;
-          if (batchCnt == 4) {
-            uint32_t visMask = frustumTestAABB_x4(frustumPlanes, bOx, bOy, bOz);
-            for (int b = 0; b < 4; b++) {
-              if (visMask & (1u << b))
-                processVisible(bIdx[b]);
-            }
-            batchCnt = 0;
-          }
-        }
-        if (batchCnt > 0) {
-          for (int b = batchCnt; b < 4; b++) {
-            bOx[b] = 1e10f;
-            bOy[b] = 1e10f;
-            bOz[b] = 1e10f;
-          }
-          uint32_t visMask = frustumTestAABB_x4(frustumPlanes, bOx, bOy, bOz);
-          for (int b = 0; b < batchCnt; b++) {
-            if (visMask & (1u << b))
-              processVisible(bIdx[b]);
-          }
-        }
-      }
-#else
       for (int si = 0; si < totalActive; si++) {
         const MeshSnapshot &ms = s_snapshots[si];
         if (!frustumTestAABB(frustumPlanes, ms.ox, ms.oy, ms.oz, ms.ox + 16.0f,
@@ -2840,7 +2814,32 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
           continue;
         processVisible(si);
       }
-#endif
+
+      bool severeUnderfill =
+          (validCount > 0 && totalActive >= 96 &&
+           (validCount <= 8 || validCount * 24 < totalActive));
+      if (severeUnderfill) {
+        validCount = 0;
+        megaCount = 0;
+        for (int si = 0; si < totalActive; si++) {
+          processVisible(si);
+        }
+        if (g_frameCount < 5 || (g_frameCount % 600 == 0)) {
+          dbg("CULL_FAILSAFE_LOW: visible=%d input=%d fallback distance-only\n",
+              validCount, totalActive);
+        }
+      }
+
+      if (validCount == 0 && totalActive > 0) {
+        for (int si = 0; si < totalActive; si++) {
+          processVisible(si);
+        }
+        if (g_frameCount < 5 || (g_frameCount % 600 == 0)) {
+          dbg("CULL_FAILSAFE: frustum rejected all %d chunks, fallback "
+              "distance-only\n",
+              totalActive);
+        }
+      }
     }
 
     if (g_frameCount < 5 || (g_frameCount % 600 == 0)) {
@@ -2863,10 +2862,10 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
             (StaleDrawCmd *)malloc(sizeof(StaleDrawCmd) * g_staleCapacity);
       }
       for (int i = 0; i < validCount; i++) {
-        g_staleDrawCmds[i] = {s_cmds[i].megaOffset, s_cmds[i].resolvedBuf,
-                              s_cmds[i].idxCount,   s_cmds[i].opaqueIdxCount,
-                              s_cmds[i].ox,         s_cmds[i].oy,
-                              s_cmds[i].oz,         s_cmds[i].isMega};
+        g_staleDrawCmds[i] = {
+            s_cmds[i].bufHandle, s_cmds[i].idxCount, s_cmds[i].opaqueIdxCount,
+            s_cmds[i].ox,        s_cmds[i].oy,       s_cmds[i].oz,
+            s_cmds[i].isMega};
       }
       g_staleDrawCount = validCount;
       g_staleMegaCount = megaCount;
@@ -2889,12 +2888,23 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
         s_cmdsCapacity = validCount * 2;
         s_cmds = new DrawCmd[s_cmdsCapacity];
       }
+      int reusedCount = 0;
+      int reusedMegaCount = 0;
       for (int i = 0; i < validCount; i++) {
         const StaleDrawCmd &sc = g_staleDrawCmds[i];
-        s_cmds[i] = {
-            0,    sc.megaOffset, sc.resolvedBuf, sc.idxCount, sc.opaqueIdxCount,
-            0.0f, sc.ox - dcx,   sc.oy - dcy,    sc.oz - dcz, sc.isMega};
+        ResolvedBuf staleRes = resolve_buffer(sc.bufferHandle);
+        if (!staleRes.buf)
+          continue;
+        s_cmds[reusedCount++] = {sc.bufferHandle,   staleRes.offset,
+                                 staleRes.buf,      sc.idxCount,
+                                 sc.opaqueIdxCount, 0.0f,
+                                 sc.ox - dcx,       sc.oy - dcy,
+                                 sc.oz - dcz,       sc.isMega};
+        if (sc.isMega)
+          reusedMegaCount++;
       }
+      validCount = reusedCount;
+      megaCount = reusedMegaCount;
     }
 
     if (validCount == 0)
@@ -3127,6 +3137,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
                 [g_currentEncoder setFragmentTexture:g_blockAtlas atIndex:0];
               if (g_depthState)
                 [g_currentEncoder setDepthStencilState:g_depthState];
+              [g_currentEncoder
+                  setFrontFacingWinding:MTLWindingCounterClockwise];
               [g_currentEncoder setCullMode:MTLCullModeBack];
               [g_currentEncoder setVertexBytes:g_projMatrix
                                         length:64
@@ -3280,6 +3292,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       offBuf[i * 4 + 0] = s_cmds[i].ox;
       offBuf[i * 4 + 1] = s_cmds[i].oy;
       offBuf[i * 4 + 2] = s_cmds[i].oz;
+<<<<<<< HEAD
       float cx = s_cmds[i].ox + 8.0f;
       float cy = s_cmds[i].oy + 8.0f;
       float cz = s_cmds[i].oz + 8.0f;
@@ -3302,6 +3315,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
         faceMask &= ~(1u << 4);
       if (cx > margin)
         faceMask &= ~(1u << 5);
+=======
+      uint32_t faceMask = 0u;
+>>>>>>> e028af4 (checkpoint, WIP)
       float maskAsFloat;
       memcpy(&maskAsFloat, &faceMask, sizeof(float));
       offBuf[i * 4 + 3] = maskAsFloat;
@@ -3314,6 +3330,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
     if (g_depthState) {
       [g_currentEncoder setDepthStencilState:g_depthState];
     }
+    [g_currentEncoder setFrontFacingWinding:MTLWindingCounterClockwise];
+    [g_currentEncoder setCullMode:MTLCullModeBack];
 
     [g_currentEncoder setFragmentBytes:g_entityOverlayParams
                                 length:sizeof(g_entityOverlayParams)
@@ -5131,6 +5149,30 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nSetFeatureFlags(
 
 
 
+<<<<<<< HEAD
+=======
+    id<MTLRenderPipelineState> waterPipeline =
+        g_pipelineWater ? g_pipelineWater : g_pipelineInhouse;
+    [g_currentEncoder setRenderPipelineState:waterPipeline];
+    g_currentPipeline = waterPipeline;
+    if (g_blockAtlas)
+      [g_currentEncoder setFragmentTexture:g_blockAtlas atIndex:0];
+    if (g_megaVB)
+      [g_currentEncoder setVertexBuffer:g_megaVB offset:0 atIndex:0];
+    [g_currentEncoder setVertexBytes:g_projMatrix length:64 atIndex:1];
+    [g_currentEncoder setVertexBytes:g_mvMatrix length:64 atIndex:2];
+    float camPos[4] = {0.0f, 0.0f, 0.0f, g_skyBrightness};
+    [g_currentEncoder setVertexBytes:camPos length:16 atIndex:3];
+    [g_currentEncoder setVertexBuffer:g_deferredWaterOffsetBuf
+                               offset:0
+                              atIndex:4];
+    [g_currentEncoder setFragmentBytes:g_entityOverlayParams
+                                length:sizeof(g_entityOverlayParams)
+                               atIndex:5];
+    [g_currentEncoder setDepthStencilState:g_depthStateNoWrite];
+    [g_currentEncoder setCullMode:MTLCullModeNone];
+    [g_currentEncoder setDepthBias:0.0f slopeScale:0.0f clamp:0.0f];
+>>>>>>> e028af4 (checkpoint, WIP)
 
 
 

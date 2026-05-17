@@ -45,6 +45,10 @@ public class CustomChunkMesher {
   private static final int SECTION_SIZE = 16;
   private static final int MAX_QUADS = SECTION_SIZE * SECTION_SIZE * SECTION_SIZE * 6;
   private static final int VERTEX_BUF_SIZE = MAX_QUADS * 4 * VERTEX_STRIDE;
+<<<<<<< HEAD
+=======
+  private static final byte WATER_ALPHA = (byte) 168;
+>>>>>>> e028af4 (checkpoint, WIP)
   private static final ThreadLocal<ByteBuffer> VERTEX_BUF_POOL = ThreadLocal
       .withInitial(() -> ByteBuffer.allocateDirect(VERTEX_BUF_SIZE)
           .order(ByteOrder.nativeOrder()));
@@ -86,15 +90,19 @@ public class CustomChunkMesher {
 =======
   private static final Semaphore UPLOAD_SEMAPHORE = new Semaphore(6);
   private static final int FALLBACK_UPLOAD_PARALLELISM = 6;
-  private static final int FAST_UPLOAD_PARALLELISM = 24;
+  private static final int FAST_UPLOAD_PARALLELISM = 8;
   private static final Semaphore FALLBACK_UPLOAD_SEMAPHORE = new Semaphore(FALLBACK_UPLOAD_PARALLELISM);
   private static final Semaphore FAST_UPLOAD_SEMAPHORE = new Semaphore(FAST_UPLOAD_PARALLELISM);
   private volatile boolean fastUploadPathActive;
-  private static final int NORMAL_TOTAL_THREAD_BUDGET = 100;
-  private static final int BURST_TOTAL_THREAD_BUDGET = 180;
-  private static final int BURST_MAX_BUILDER_THREADS = 32;
-  private static final int BURST_MAX_INSTANT_THREADS = 14;
-  private static final int HIGH_PRIORITY_QUEUE_SPILLOVER_THRESHOLD = 192;
+  private static final int NORMAL_TOTAL_THREAD_BUDGET = 64;
+  private static final int BURST_TOTAL_THREAD_BUDGET = 128;
+  private static final int BURST_MAX_BUILDER_THREADS = 28;
+  private static final int BURST_MAX_INSTANT_THREADS = 12;
+  private static final int HIGH_PRIORITY_QUEUE_SPILLOVER_THRESHOLD = 24;
+  private static final int INTERACTIVE_PRIORITY_QUEUE_SPILLOVER_THRESHOLD = 48;
+  private static final int DETAIL_TIER_SCALE_MEDIUM = 2;
+  private static final int DETAIL_TIER_SCALE_FAR = 4;
+  private static final int DETAIL_TIER_SCALE_EXTREME = 8;
   private volatile boolean aggressiveApproximateLighting;
   private final java.util.concurrent.atomic.AtomicLong visibleSectionLatencyAccNs = new java.util.concurrent.atomic.AtomicLong(
       0L);
@@ -268,8 +276,11 @@ public class CustomChunkMesher {
     java.util.concurrent.ThreadFactory meshFactory = r -> {
       Thread t = new Thread(r, "MetalRender-MeshBuilder");
       t.setDaemon(true);
+<<<<<<< HEAD
 
 
+=======
+>>>>>>> e028af4 (checkpoint, WIP)
       t.setPriority(Thread.MIN_PRIORITY);
       return t;
     };
@@ -288,8 +299,14 @@ public class CustomChunkMesher {
           return t;
         });
     warmupTimer.schedule(() -> {
+<<<<<<< HEAD
       builderPool.setCorePoolSize(steadyThreadCount);
       builderPool.setMaximumPoolSize(steadyThreadCount);
+=======
+      if (getPendingCount() == 0) {
+        updateThreadPoolSize(builderPool, steadyThreadCount);
+      }
+>>>>>>> e028af4 (checkpoint, WIP)
       warmupTimer.shutdown();
     }, 30, java.util.concurrent.TimeUnit.SECONDS);
 
@@ -300,6 +317,22 @@ public class CustomChunkMesher {
     java.util.concurrent.ThreadFactory instantFactory = r -> {
       Thread t = new Thread(r, "MetalRender-InstantRebuild");
       t.setDaemon(true);
+<<<<<<< HEAD
+=======
+      t.setPriority(Thread.MIN_PRIORITY);
+      return t;
+    };
+    this.instantRebuildPool = new java.util.concurrent.ThreadPoolExecutor(
+        steadyInstantThreads, steadyInstantThreads,
+        1L, java.util.concurrent.TimeUnit.SECONDS,
+        new java.util.concurrent.LinkedBlockingQueue<>(),
+        instantFactory);
+    this.instantRebuildPool.allowCoreThreadTimeOut(true);
+
+    java.util.concurrent.ThreadFactory interactiveFactory = r -> {
+      Thread t = new Thread(r, "MetalRender-InteractiveRebuild");
+      t.setDaemon(true);
+>>>>>>> e028af4 (checkpoint, WIP)
       t.setPriority(Thread.NORM_PRIORITY);
       return t;
     };
@@ -626,7 +659,7 @@ public class CustomChunkMesher {
 
   private boolean isBurstThreadModeEnabled() {
     MetalRenderConfig config = MetalRenderClient.getConfig();
-    return config != null && config.enableBurstThreadMode;
+    return config != null && (config.enableBurstThreadMode || config.prioritizeFpsOverTps);
   }
 
   private int getThreadBudgetCap() {
@@ -651,10 +684,18 @@ public class CustomChunkMesher {
 
   public void setLoadingModeThreadBudget(boolean loadingMode, int totalPending) {
     int pending = Math.max(getPendingCount(), totalPending);
-    aggressiveApproximateLighting = loadingMode || pending >= 256;
+    MetalRenderConfig config = MetalRenderClient.getConfig();
+    boolean fpsPriorityMode = config != null && config.prioritizeFpsOverTps;
+    int approximateLightingThreshold = fpsPriorityMode ? 2048 : 256;
+    aggressiveApproximateLighting = loadingMode || pending >= approximateLightingThreshold;
     if (pending <= 0) {
       updateThreadPoolSize(builderPool, 0);
       updateThreadPoolSize(instantRebuildPool, 0);
+      return;
+    }
+    if (fpsPriorityMode) {
+      updateThreadPoolSize(builderPool, getBuilderThreadCap());
+      updateThreadPoolSize(instantRebuildPool, getInstantThreadCap());
       return;
     }
     int baseTarget = loadingMode ? boostedBuilderThreadCount : steadyBuilderThreadCount;
@@ -675,11 +716,21 @@ public class CustomChunkMesher {
     } else if (pending >= 256) {
       backlogBoost = 1;
     }
+<<<<<<< HEAD
 >>>>>>> 62d2482 (optimisation for high-rend scenes with tons of chunks. also fixed chunk loading speeds)
     int currentCore = builderPool.getCorePoolSize();
     int currentMax = builderPool.getMaximumPoolSize();
     if (currentCore == target && currentMax == target) {
       return;
+=======
+    int budgetCap = Math.min(getBuilderThreadCap(), getThreadBudgetCap());
+    int target = Math.min(budgetCap, baseTarget + backlogBoost);
+    updateThreadPoolSize(builderPool, target);
+
+    int instantTarget = loadingMode ? steadyInstantThreadCount + 2 : steadyInstantThreadCount;
+    if (isBurstThreadModeEnabled()) {
+      instantTarget++;
+>>>>>>> e028af4 (checkpoint, WIP)
     }
     if (target > currentMax) {
       builderPool.setMaximumPoolSize(target);
@@ -949,6 +1000,301 @@ public class CustomChunkMesher {
         return false;
     }
     return true;
+  }
+
+  private static boolean isFastLodCompatible(BlockState state, int lodLevel) {
+    if (state == null || state.isAir() || !shouldRenderAtLod(state, lodLevel)) {
+      return true;
+    }
+    Block block = state.getBlock();
+    if (block == Blocks.WATER || block == Blocks.LAVA || isLeafBlock(block)
+        || block == Blocks.SNOW || isTopOnlyDecorative(block)) {
+      return true;
+    }
+    if (!state.getFluidState().isEmpty()) {
+      return false;
+    }
+    return isFullCubeShape(state);
+  }
+
+  private static boolean canUseFastLodSection(int[] blockStates, int lodLevel) {
+    if (lodLevel <= 0 || blockStates == null) {
+      return false;
+    }
+    for (int stateId : blockStates) {
+      if (stateId == 0) {
+        continue;
+      }
+      if (!isFastLodCompatible(Block.stateById(stateId), lodLevel)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private static final class CoarseDetailMeshStats {
+    int opaqueQuadCount;
+    int waterQuadCount;
+    int cellsMeshed;
+    int sampledCells;
+  }
+
+  private static int detailTierCellScale(int detailTier) {
+    return switch (detailTier) {
+      case 1 -> DETAIL_TIER_SCALE_MEDIUM;
+      case 2 -> DETAIL_TIER_SCALE_FAR;
+      default -> DETAIL_TIER_SCALE_EXTREME;
+    };
+  }
+
+  private static int coarseStateRank(BlockState state) {
+    if (state == null || state.isAir()) {
+      return 0;
+    }
+    if (!state.getFluidState().isEmpty()) {
+      return state.getBlock() == Blocks.LAVA ? 5 : 4;
+    }
+    if (state.isSolidRender()) {
+      return 6;
+    }
+    if (state.canOcclude() || state.isSolid()) {
+      return 5;
+    }
+    if (isLeafBlock(state.getBlock())) {
+      return 3;
+    }
+    return 0;
+  }
+
+  private static int selectCoarseState(int[] blockStates, int startX, int startY,
+      int startZ, int scale) {
+    if (blockStates == null) {
+      return 0;
+    }
+    int bestSid = 0;
+    int bestRank = 0;
+    for (int y = startY; y < startY + scale; y++) {
+      for (int z = startZ; z < startZ + scale; z++) {
+        for (int x = startX; x < startX + scale; x++) {
+          int sid = blockStates[y * 256 + z * 16 + x];
+          if (sid == 0) {
+            continue;
+          }
+          int rank = coarseStateRank(Block.stateById(sid));
+          if (rank > bestRank) {
+            bestRank = rank;
+            bestSid = sid;
+          }
+        }
+      }
+    }
+    return bestSid;
+  }
+
+  private static byte selectCoarseLight(byte[] lightData, int startX, int startY,
+      int startZ, int scale) {
+    if (lightData == null) {
+      return (byte) 0xF0;
+    }
+    int block = 0;
+    int sky = 0;
+    for (int y = startY; y < startY + scale; y++) {
+      for (int z = startZ; z < startZ + scale; z++) {
+        for (int x = startX; x < startX + scale; x++) {
+          int packed = lightData[y * 256 + z * 16 + x] & 0xFF;
+          block = Math.max(block, packed & 0xF);
+          sky = Math.max(sky, (packed >> 4) & 0xF);
+        }
+      }
+    }
+    return (byte) ((block & 0xF) | ((sky & 0xF) << 4));
+  }
+
+  private static boolean hasCoarseOccupancy(int[] blockStates, int startX,
+      int startY, int startZ, int scale) {
+    return selectCoarseState(blockStates, startX, startY, startZ, scale) != 0;
+  }
+
+  private static boolean hasCoarseFaceOccupancy(int[] faceStates, int faceDir,
+      int startX, int startY, int startZ, int scale) {
+    if (faceStates == null) {
+      return false;
+    }
+    switch (faceDir) {
+      case 0, 1:
+        for (int z = startZ; z < startZ + scale; z++) {
+          for (int x = startX; x < startX + scale; x++) {
+            if (faceStates[z * SECTION_SIZE + x] != 0) {
+              return true;
+            }
+          }
+        }
+        return false;
+      case 2, 3:
+        for (int y = startY; y < startY + scale; y++) {
+          for (int x = startX; x < startX + scale; x++) {
+            if (faceStates[y * SECTION_SIZE + x] != 0) {
+              return true;
+            }
+          }
+        }
+        return false;
+      case 4, 5:
+        for (int y = startY; y < startY + scale; y++) {
+          for (int z = startZ; z < startZ + scale; z++) {
+            if (faceStates[y * SECTION_SIZE + z] != 0) {
+              return true;
+            }
+          }
+        }
+        return false;
+      default:
+        return false;
+    }
+  }
+
+  private CoarseDetailMeshStats buildDistanceTierMesh(ByteBuffer vertexBuffer,
+      ByteBuffer waterBuffer, ClientLevel world, BlockStateModelSet blockModels,
+      int chunkX, int chunkY, int chunkZ, int[] blockStates, byte[] lightData,
+      int detailTier, int[] nXNeg, int[] nXPos, int[] nYNeg, int[] nYPos,
+      int[] nZNeg, int[] nZPos) {
+    CoarseDetailMeshStats stats = new CoarseDetailMeshStats();
+    int scale = detailTierCellScale(detailTier);
+    int gridSize = SECTION_SIZE / scale;
+    int cellCount = gridSize * gridSize * gridSize;
+    int[] coarseStates = new int[cellCount];
+    byte[] coarseLights = new byte[cellCount];
+    int[] sectionBiomeColors = getSectionBiomeColors(world, chunkX, chunkY, chunkZ, 1);
+
+    for (int cellY = 0; cellY < gridSize; cellY++) {
+      int startY = cellY * scale;
+      for (int cellZ = 0; cellZ < gridSize; cellZ++) {
+        int startZ = cellZ * scale;
+        for (int cellX = 0; cellX < gridSize; cellX++) {
+          int startX = cellX * scale;
+          int cellIndex = cellY * gridSize * gridSize + cellZ * gridSize + cellX;
+          coarseStates[cellIndex] = selectCoarseState(blockStates, startX, startY, startZ, scale);
+          coarseLights[cellIndex] = selectCoarseLight(lightData, startX, startY, startZ, scale);
+          stats.sampledCells++;
+        }
+      }
+    }
+
+    for (int cellY = 0; cellY < gridSize; cellY++) {
+      int startY = cellY * scale;
+      for (int cellZ = 0; cellZ < gridSize; cellZ++) {
+        int startZ = cellZ * scale;
+        for (int cellX = 0; cellX < gridSize; cellX++) {
+          int startX = cellX * scale;
+          int cellIndex = cellY * gridSize * gridSize + cellZ * gridSize + cellX;
+          int sid = coarseStates[cellIndex];
+          if (sid == 0) {
+            continue;
+          }
+          BlockState state = Block.stateById(sid);
+          Block block = state.getBlock();
+          boolean isWater = block == Blocks.WATER || (!state.getFluidState().isEmpty() && block != Blocks.LAVA);
+          boolean translucent = isWater;
+          ByteBuffer target = translucent ? waterBuffer : vertexBuffer;
+          byte alpha = translucent ? WATER_ALPHA : (byte) 255;
+          byte packedLight = coarseLights[cellIndex];
+          int tintType = getBiomeTintType(block);
+          int color = tintType != TINT_NONE && tintType < sectionBiomeColors.length
+              ? sectionBiomeColors[tintType]
+              : getBlockColor(state);
+          byte tintR = (byte) ((color >> 16) & 0xFF);
+          byte tintG = (byte) ((color >> 8) & 0xFF);
+          byte tintB = (byte) (color & 0xFF);
+          TextureAtlasSprite sprite = null;
+          if (blockModels != null) {
+            try {
+              BlockStateModel model = blockModels.get(state);
+              if (model != null) {
+                sprite = model.particleMaterial().sprite();
+              }
+            } catch (Exception ignored) {
+            }
+          }
+
+          boolean occludedDown = cellY > 0
+              ? coarseStates[cellIndex - (gridSize * gridSize)] != 0
+              : hasCoarseFaceOccupancy(nYNeg, 0, startX, 0, startZ, scale);
+          boolean occludedUp = cellY < gridSize - 1
+              ? coarseStates[cellIndex + (gridSize * gridSize)] != 0
+              : hasCoarseFaceOccupancy(nYPos, 1, startX, 0, startZ, scale);
+          boolean occludedNorth = cellZ > 0
+              ? coarseStates[cellIndex - gridSize] != 0
+              : hasCoarseFaceOccupancy(nZNeg, 2, startX, startY, 0, scale);
+          boolean occludedSouth = cellZ < gridSize - 1
+              ? coarseStates[cellIndex + gridSize] != 0
+              : hasCoarseFaceOccupancy(nZPos, 3, startX, startY, 0, scale);
+          boolean occludedWest = cellX > 0
+              ? coarseStates[cellIndex - 1] != 0
+              : hasCoarseFaceOccupancy(nXNeg, 4, 0, startY, startZ, scale);
+          boolean occludedEast = cellX < gridSize - 1
+              ? coarseStates[cellIndex + 1] != 0
+              : hasCoarseFaceOccupancy(nXPos, 5, 0, startY, startZ, scale);
+
+          if (!occludedDown && stats.opaqueQuadCount + stats.waterQuadCount < MAX_QUADS) {
+            emitFaceScaled(target, startX, startY, startZ, 0, sprite, packedLight, tintR, tintG, tintB, alpha,
+                scale, 0);
+            if (translucent) {
+              stats.waterQuadCount++;
+            } else {
+              stats.opaqueQuadCount++;
+            }
+          }
+          if (!occludedUp && stats.opaqueQuadCount + stats.waterQuadCount < MAX_QUADS) {
+            emitFaceScaled(target, startX, startY, startZ, 1, sprite, packedLight, tintR, tintG, tintB, alpha,
+                scale, 0);
+            if (translucent) {
+              stats.waterQuadCount++;
+            } else {
+              stats.opaqueQuadCount++;
+            }
+          }
+          if (!occludedNorth && stats.opaqueQuadCount + stats.waterQuadCount < MAX_QUADS) {
+            emitFaceScaled(target, startX, startY, startZ, 2, sprite, packedLight, tintR, tintG, tintB, alpha,
+                scale, 0);
+            if (translucent) {
+              stats.waterQuadCount++;
+            } else {
+              stats.opaqueQuadCount++;
+            }
+          }
+          if (!occludedSouth && stats.opaqueQuadCount + stats.waterQuadCount < MAX_QUADS) {
+            emitFaceScaled(target, startX, startY, startZ, 3, sprite, packedLight, tintR, tintG, tintB, alpha,
+                scale, 0);
+            if (translucent) {
+              stats.waterQuadCount++;
+            } else {
+              stats.opaqueQuadCount++;
+            }
+          }
+          if (!occludedWest && stats.opaqueQuadCount + stats.waterQuadCount < MAX_QUADS) {
+            emitFaceScaled(target, startX, startY, startZ, 4, sprite, packedLight, tintR, tintG, tintB, alpha,
+                scale, 0);
+            if (translucent) {
+              stats.waterQuadCount++;
+            } else {
+              stats.opaqueQuadCount++;
+            }
+          }
+          if (!occludedEast && stats.opaqueQuadCount + stats.waterQuadCount < MAX_QUADS) {
+            emitFaceScaled(target, startX, startY, startZ, 5, sprite, packedLight, tintR, tintG, tintB, alpha,
+                scale, 0);
+            if (translucent) {
+              stats.waterQuadCount++;
+            } else {
+              stats.opaqueQuadCount++;
+            }
+          }
+          stats.cellsMeshed++;
+        }
+      }
+    }
+
+    return stats;
   }
 
   private static volatile boolean applyFaceShade = true;
@@ -1274,10 +1620,17 @@ public class CustomChunkMesher {
       }
       MetalRenderConfig leafCfg = MetalRenderClient.getConfig();
       int leafMode = (leafCfg != null) ? leafCfg.leafCullingMode : 0;
+<<<<<<< HEAD
       boolean smoothLighting = (leafCfg != null && leafCfg.enableSimpleLighting);
       applyFaceShade = smoothLighting;
       boolean useFastPath = (lodLevel >= 1);
       boolean skipNonDirectionalQuads = (lodLevel >= 1);
+=======
+      applyFaceShade = false;
+      boolean useDistanceTier = false;
+      boolean useFastPath = canUseFastLodSection(blockStates, lodLevel);
+      boolean skipNonDirectionalQuads = useFastPath;
+>>>>>>> e028af4 (checkpoint, WIP)
 
 
 
@@ -1293,7 +1646,15 @@ public class CustomChunkMesher {
         buildPCZ = mc.player.getChunkPos().z;
         buildPCY = (int) Math.floor(mc.player.getY()) >> 4;
       }
-      if (useFastPath) {
+      if (useDistanceTier) {
+        CoarseDetailMeshStats coarseStats = buildDistanceTierMesh(vertexBuffer, waterBuffer,
+            mc != null ? mc.level : null, blockModels, chunkX, chunkY, chunkZ,
+            blockStates, lightData, lodLevel, nXNeg, nXPos, nYNeg, nYPos, nZNeg, nZPos);
+        opaqueQuadCount = coarseStats.opaqueQuadCount;
+        waterQuadCount = coarseStats.waterQuadCount;
+        bakedQuadBlocks = coarseStats.cellsMeshed;
+        fallbackBlocks = coarseStats.sampledCells;
+      } else if (useFastPath) {
         int[] fastBiomeColors = getSectionBiomeColors(
             mc != null ? mc.world : null, chunkX, chunkY, chunkZ,
             MetalRenderClient.getConfig().biomeTransitionDetail);
@@ -2552,7 +2913,6 @@ public class CustomChunkMesher {
                         tintG,
                         tintB, wAlpha, wd00, wd01, wd11, wd10);
                 }
-                continue;
               }
               Sprite sprite = (modelArr[stateId] != null) ? modelArr[stateId].particleSprite() : null;
               boolean isWaterBlock = sidIsWaterLod0[stateId];
@@ -2942,6 +3302,83 @@ public class CustomChunkMesher {
     return true;
   }
 
+<<<<<<< HEAD
+=======
+  private static void recordLightSampleFallback(String stage, Exception e) {
+    int c = ++lightSampleFallbackCount;
+    if (c <= 5 || c % 250 == 0) {
+      MetalLogger.warn("LIGHT_FALLBACK[%s]: count=%d reason=%s", stage, c,
+          e != null ? e.getClass().getSimpleName() + ": " + e.getMessage() : "unknown");
+    }
+  }
+
+  private void fillApproximateLightData(ClientLevel world, int chunkX, int chunkY,
+      int chunkZ, int[] blockStates, byte[] lightData,
+      BlockPos.MutableBlockPos mutablePos) {
+    int baseX = chunkX * 16;
+    int baseY = chunkY * 16;
+    int baseZ = chunkZ * 16;
+    for (int sampleY = 0; sampleY < 16; sampleY += 2) {
+      for (int sampleZ = 0; sampleZ < 16; sampleZ += 2) {
+        for (int sampleX = 0; sampleX < 16; sampleX += 2) {
+          boolean hasAnyBlock = false;
+          for (int dy = 0; dy < 2 && !hasAnyBlock; dy++) {
+            for (int dz = 0; dz < 2 && !hasAnyBlock; dz++) {
+              for (int dx = 0; dx < 2; dx++) {
+                int x = sampleX + dx;
+                int y = sampleY + dy;
+                int z = sampleZ + dz;
+                int idx = y * 256 + z * 16 + x;
+                if (blockStates[idx] != 0) {
+                  hasAnyBlock = true;
+                  break;
+                }
+              }
+            }
+          }
+
+          byte packedLight = 0;
+          if (hasAnyBlock) {
+            int maxBlockLight = 0;
+            int maxSkyLight = 0;
+            for (int dy = 0; dy < 2; dy++) {
+              for (int dz = 0; dz < 2; dz++) {
+                for (int dx = 0; dx < 2; dx++) {
+                  int x = sampleX + dx;
+                  int y = sampleY + dy;
+                  int z = sampleZ + dz;
+                  int idx = y * 256 + z * 16 + x;
+                  if (blockStates[idx] == 0) {
+                    continue;
+                  }
+                  mutablePos.set(baseX + x, baseY + y, baseZ + z);
+                  maxBlockLight = Math.max(maxBlockLight,
+                      world.getBrightness(LightLayer.BLOCK, mutablePos));
+                  maxSkyLight = Math.max(maxSkyLight,
+                      world.getBrightness(LightLayer.SKY, mutablePos));
+                }
+              }
+            }
+            packedLight = (byte) ((maxBlockLight & 0xF) | ((maxSkyLight & 0xF) << 4));
+          }
+
+          for (int dy = 0; dy < 2; dy++) {
+            for (int dz = 0; dz < 2; dz++) {
+              for (int dx = 0; dx < 2; dx++) {
+                int x = sampleX + dx;
+                int y = sampleY + dy;
+                int z = sampleZ + dz;
+                int idx = y * 256 + z * 16 + x;
+                lightData[idx] = blockStates[idx] != 0 ? packedLight : 0;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+>>>>>>> e028af4 (checkpoint, WIP)
   public void buildMeshFromWorld(int chunkX, int chunkY, int chunkZ) {
     buildMeshFromWorld(chunkX, chunkY, chunkZ, 0);
   }
@@ -3255,7 +3692,32 @@ public class CustomChunkMesher {
             chunkY, chunkZ, e.getMessage());
       }
     };
+<<<<<<< HEAD
     if (highPriority) {
+=======
+    if (interactivePriority) {
+      int interactiveQueueDepth = interactiveRebuildPool != null ? interactiveRebuildPool.getQueue().size() : 0;
+      int interactiveActive = interactiveRebuildPool != null ? interactiveRebuildPool.getActiveCount() : 0;
+      int interactiveMax = interactiveRebuildPool != null ? interactiveRebuildPool.getMaximumPoolSize() : 0;
+      boolean interactiveHasHeadroom = interactiveActive < interactiveMax
+          && interactiveQueueDepth < INTERACTIVE_PRIORITY_QUEUE_SPILLOVER_THRESHOLD;
+      if (interactiveHasHeadroom) {
+        interactiveRebuildPool.submit(buildTask);
+        return;
+      }
+    }
+    ExecutorService pool = wasDirty ? dirtyRebuildPool : builderPool;
+    if (highPriority) {
+      int instantQueueDepth = instantRebuildPool != null ? instantRebuildPool.getQueue().size() : 0;
+      int instantActive = instantRebuildPool != null ? instantRebuildPool.getActiveCount() : 0;
+      int instantMax = instantRebuildPool != null ? instantRebuildPool.getMaximumPoolSize() : 0;
+      boolean instantHasHeadroom = instantActive < instantMax;
+      if (instantQueueDepth < HIGH_PRIORITY_QUEUE_SPILLOVER_THRESHOLD && instantHasHeadroom) {
+        instantRebuildPool.submit(buildTask);
+        return;
+      }
+    }
+>>>>>>> e028af4 (checkpoint, WIP)
 
 
       instantRebuildPool.submit(buildTask);

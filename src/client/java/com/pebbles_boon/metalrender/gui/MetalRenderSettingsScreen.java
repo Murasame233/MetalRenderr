@@ -480,6 +480,7 @@ public class MetalRenderSettingsScreen extends Screen {
   }
 
   private void applyPending() {
+<<<<<<< HEAD
     GameOptions o = MinecraftClient.getInstance().options;
     o.getViewDistance().setValue(pendingRenderDist);
     o.getSimulationDistance().setValue(pendingSimDist);
@@ -489,6 +490,21 @@ public class MetalRenderSettingsScreen extends Screen {
     o.getFov().setValue(pendingFov);
     o.getDistortionEffectScale().setValue(pendingDistortion);
     o.getFovEffectScale().setValue(pendingFovEffects);
+=======
+    Options o = Minecraft.getInstance().options;
+    o.renderDistance().set(pendingRenderDist);
+    if (config.prioritizeFpsOverTps) {
+      pendingSimDist = Math.min(pendingSimDist, 5);
+    }
+    o.simulationDistance().set(pendingSimDist);
+    o.framerateLimit().set(toVanillaFpsLimit(pendingMaxFps));
+    o.guiScale().set(pendingGuiScale);
+    o.gamma().set(pendingBrightness);
+    o.fov().set(pendingFov);
+    o.screenEffectScale().set(pendingDistortion);
+    o.fovEffectScale().set(pendingFovEffects);
+    o.save();
+>>>>>>> e028af4 (checkpoint, WIP)
     config.targetFrameRate = pendingTargetFps;
     config.maxMemoryMB = pendingMaxMemMb;
     MetalRenderConfig.setOneRunDeepDebugRequested(pendingDeepDebugNextRun);
@@ -594,6 +610,12 @@ public class MetalRenderSettingsScreen extends Screen {
     sec("Frame Pacing");
     sld("Target FPS", 30, 240, 30, pendingTargetFps, v -> pendingTargetFps = (int) (float) v);
     tog("Triple Buffering", config.enableTripleBuffering, v -> config.enableTripleBuffering = v);
+<<<<<<< HEAD
+=======
+    tog("Burst Thread Mode", config.enableBurstThreadMode, v -> config.enableBurstThreadMode = v);
+    tog("Sacrifice TPS for FPS", config.prioritizeFpsOverTps, v -> config.prioritizeFpsOverTps = v);
+    nfo("FPS Priority Mode", config.prioritizeFpsOverTps ? "Simulation Distance <= 5" : "Off");
+>>>>>>> e028af4 (checkpoint, WIP)
     sec("Memory");
     sld("Max GPU Memory (MB)", 512, 4096, 512, pendingMaxMemMb, v -> pendingMaxMemMb = (int) (float) v);
     tog("Memory Fallback", config.enableMemoryPressureFallback, v -> config.enableMemoryPressureFallback = v);
